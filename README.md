@@ -39,21 +39,20 @@ A React Native (Expo) spiritual progress tracking app for ISKCON London. Track s
 
 > **Tip:** The first load takes a moment while the JavaScript bundle is built. Subsequent reloads are faster.
 
-## Demo Controls
+## Demo Sign-In Accounts
 
-The app includes a role switcher bar at the top of the screen:
+The app opens to a sign-in screen. Use these credentials to explore different roles (password for all: `bhakti123`):
 
-- Tap **Mentee** / **Mentor** / **Admin** to switch between roles
-- Each role has its own tab navigation and screens
-- Drill-down navigation works within each role (e.g. Dashboard → Batch → Mentee)
+| Role | Email | What you'll see |
+|------|-------|-----------------|
+| **Mentee** | `john@example.com` | Sadhana form, progress charts, seva & books, profile |
+| **Mentor** | `syama@example.com` | Dashboard, batches, mentee drill-down, approvals |
+| **Admin** | `govinda@iskcon.london` | KPI dashboard, user management, batch oversight, settings |
+| **Mentor + Admin** | `prabhava@iskcon.london` | Dual-role account — switch between Mentor and Admin via the header toggle |
 
-## Screens by Role
+> **Note:** The account `radha@example.com` is intentionally set to "pending" status to demonstrate the approval flow — signing in will show a pending message.
 
-| Role | Screens |
-|------|---------|
-| **Mentee** | Today (Sadhana Form), Progress, Seva & Books, Profile |
-| **Mentor** | Dashboard, Batch Detail, Mentee Detail, Approvals, Profile |
-| **Admin** | Dashboard, Users, Batch Oversight, Settings |
+Each role has its own tab navigation. Mentor and Admin roles support drill-down navigation (e.g. Dashboard → Batch → Mentee).
 
 ## Running on Emulators/Simulators (Optional)
 
@@ -93,6 +92,6 @@ npx expo start --android
 
 ## Notes
 
-- All data is mocked — no backend or authentication required
+- All data is mocked — no backend required
 - Haptic feedback works on physical devices (not simulators)
 - Built with Expo SDK 54, React Native 0.81
