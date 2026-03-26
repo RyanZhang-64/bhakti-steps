@@ -6,10 +6,9 @@
  * ──────────────────────────────────────────────────────────────
  */
 
-// AWS Amplify — uncomment after running `amplify init` + `amplify push`
-// import { Amplify } from 'aws-amplify';
-// import amplifyconfig from './src/amplifyconfiguration.json';
-// Amplify.configure(amplifyconfig);
+// Initialize Supabase client
+import { initApiClient } from './src/api/client';
+initApiClient();
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
@@ -26,6 +25,7 @@ import {
 } from 'react-native';
 import { useFonts } from 'expo-font';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import * as Linking from 'expo-linking';
 // Theme
 import { ThemeProvider, useTheme } from './src/ThemeContext';
 // Theme
@@ -126,12 +126,33 @@ function AppContent() {
   const { isDark, colors } = useTheme();
   const [loggedInAccount, setLoggedInAccount] = useState(null);
   const [authScreen, setAuthScreen] = useState('login');
+  const [inviteToken, setInviteToken] = useState(null);
   const [currentRole, setCurrentRole] = useState('mentee');
   const [currentTab, setCurrentTab] = useState('today');
   const [drillDownScreen, setDrillDownScreen] = useState(null);
   const [selectedTable, setSelectedTable] = useState(null);
   const notificationSheetRef = useRef(null);
   const drillDownOpacity = useRef(new Animated.Value(0)).current;
+
+  // Deep link handling — parse invite token from URL
+  useEffect(() => {
+    const handleDeepLink = (event) => {
+      const { queryParams } = Linking.parse(event.url);
+      if (queryParams?.token) {
+        setInviteToken(queryParams.token);
+        setAuthScreen('register');
+      }
+    };
+
+    // Check if app was opened via a deep link
+    Linking.getInitialURL().then((url) => {
+      if (url) handleDeepLink({ url });
+    });
+
+    // Listen for deep links while app is running
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+    return () => subscription.remove();
+  }, []);
 
   // Notification data
   const hasNotifications = currentRole === 'mentor' && MockData.mentorNotifications.length > 0;
@@ -156,23 +177,19 @@ function AppContent() {
 
   // Show login/register screen when not authenticated
   if (!loggedInAccount) {
-    if (authScreen === 'register') {
+    if (authScreen === 'register' && inviteToken) {
       return (
         <RegisterScreen
+          inviteToken={inviteToken}
           onRegister={(account) => {
-            if (account.status === 'pending') {
-              Alert.alert(
-                'Application Submitted',
-                'Your mentor application has been submitted for review. You will be notified once approved.',
-                [{ text: 'OK', onPress: () => setAuthScreen('login') }]
-              );
-              return;
-            }
             setLoggedInAccount(account);
             setCurrentRole(account.defaultRole);
             setCurrentTab(MockData.roleTabs[account.defaultRole][0].id);
           }}
-          onBack={() => setAuthScreen('login')}
+          onBack={() => {
+            setAuthScreen('login');
+            setInviteToken(null);
+          }}
         />
       );
     }
@@ -180,14 +197,13 @@ function AppContent() {
       <LoginScreen
         onLogin={(account) => {
           if (account.status === 'pending') {
-            Alert.alert('Pending Approval', 'Your mentor application is still under review.');
+            Alert.alert('Pending Approval', 'Your account is still under review.');
             return;
           }
           setLoggedInAccount(account);
           setCurrentRole(account.defaultRole);
           setCurrentTab(MockData.roleTabs[account.defaultRole][0].id);
         }}
-        onNavigateRegister={() => setAuthScreen('register')}
       />
     );
   }
@@ -275,8 +291,8 @@ function AppContent() {
       const Screen = screens[tabId];
       const isActive = currentTab === tabId;
 
-      // Pass navigation props to screens that need them
-      const extraProps = {};
+      // Pass user account + navigation props to screens that need them
+      const extraProps = { account: loggedInAccount };
       if (tabId === 'dashboard' && currentRole === 'mentor') {
         extraProps.onNavigate = handleNavigate;
         extraProps.onTabSwitch = handleTabPress;

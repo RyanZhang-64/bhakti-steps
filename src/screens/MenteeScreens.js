@@ -6,7 +6,7 @@
  * ──────────────────────────────────────────────────────────────
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Linking,
+  ActivityIndicator,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Card } from '../components/Card';
@@ -34,6 +35,7 @@ import { colors, spacing, typography, radius } from '../theme';
 import { useTheme } from '../ThemeContext';
 import { useToast } from '../components/Toast';
 import { MockData } from '../mockData';
+import { SadhanaService, SevaService, BookService, CourseService, AdminService, UserService } from '../api';
 import { usePaginatedList } from '../hooks/usePaginatedList';
 import { PaginatedScrollView } from '../components/PaginatedScrollView';
 import Svg, { Polyline, Polygon, Line, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
@@ -95,11 +97,32 @@ const calculateScore = (config, { japaRounds, japaTarget, morningProgramme, book
 // Today Screen (§6.3)
 // ═══════════════════════════════════════════════════════════
 
-export const TodayScreen = ({ sadhanaData, sevaLogs: sevaLogsProp } = {}) => {
+export const TodayScreen = ({ account, sadhanaData, sevaLogs: sevaLogsProp } = {}) => {
   const sadhana = sadhanaData || MockData.sadhana;
-  const sevaLogsData = sevaLogsProp || MockData.sevaLogs;
   const { colors } = useTheme();
   const showToast = useToast();
+
+  // API-fetched state
+  const [allBooks, setAllBooks] = useState(MockData.books);
+  const [scoringConfig, setScoringConfig] = useState(MockData.sadhanaScoring);
+  const [sevaLogsData, setSevaLogsData] = useState(sevaLogsProp || []);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [booksRes, scoringRes, sevaRes] = await Promise.all([
+          BookService.listBooks(),
+          AdminService.getScoringConfig(),
+          SevaService.listSevaLogs(account?.id, { limit: 5 }),
+        ]);
+        setAllBooks(booksRes);
+        setScoringConfig(scoringRes);
+        setSevaLogsData(sevaRes.items || sevaRes);
+      } catch { /* fallback to initial state */ }
+    };
+    load();
+  }, [account?.id]);
+
   const [japaRounds, setJapaRounds] = useState(sadhana.japaDefault);
   const [morningProgramme, setMorningProgramme] = useState(
     sadhana.morningProgramme.map(item => item.defaultOn)
@@ -107,7 +130,7 @@ export const TodayScreen = ({ sadhanaData, sevaLogs: sevaLogsProp } = {}) => {
   const [mood, setMood] = useState(sadhana.defaultMood.toLowerCase());
   const [notes, setNotes] = useState('');
   const [submitted, setSubmitted] = useState(false);
-  const [bookEntries, setBookEntries] = useState([{ book: MockData.books[0].title, duration: 30 }]);
+  const [bookEntries, setBookEntries] = useState([{ book: allBooks[0]?.title || 'Select a book', duration: 30 }]);
   const [bannerVisible, setBannerVisible] = useState(true);
   const [preFilled, setPreFilled] = useState(false);
   const bannerHeight = useRef(new Animated.Value(60)).current;
@@ -125,7 +148,7 @@ export const TodayScreen = ({ sadhanaData, sevaLogs: sevaLogsProp } = {}) => {
     setJapaRounds(sadhana.japaDefault);
     setMorningProgramme([false, true, true, false, false, false]);
     setMood('steady');
-    setBookEntries([{ book: MockData.books[0].title, duration: 30 }]);
+    setBookEntries([{ book: allBooks[0]?.title || 'Select a book', duration: 30 }]);
     setPreFilled(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     showToast?.('Pre-filled from yesterday', 'success');
@@ -143,7 +166,7 @@ export const TodayScreen = ({ sadhanaData, sevaLogs: sevaLogsProp } = {}) => {
   };
 
   const handleSubmit = () => {
-    const score = calculateScore(MockData.sadhanaScoring, {
+    const score = calculateScore(scoringConfig, {
       japaRounds,
       japaTarget: sadhana.japaTarget,
       morningProgramme,
@@ -171,7 +194,7 @@ export const TodayScreen = ({ sadhanaData, sevaLogs: sevaLogsProp } = {}) => {
   };
 
   const addBookEntry = () => {
-    setBookEntries([...bookEntries, { book: MockData.books[0].title, duration: 30 }]);
+    setBookEntries([...bookEntries, { book: allBooks[0]?.title || 'Select a book', duration: 30 }]);
   };
 
   const removeBookEntry = (index) => {
@@ -392,7 +415,7 @@ export const TodayScreen = ({ sadhanaData, sevaLogs: sevaLogsProp } = {}) => {
         </View>
         <ScrollView keyboardShouldPersistTaps="handled">
           {/* Standalone books */}
-          {MockData.books
+          {allBooks
             .filter(b => b.title.toLowerCase().includes(bookSearchQuery.toLowerCase()))
             .map((book, i) => (
               <TouchableOpacity
@@ -466,11 +489,39 @@ export const TodayScreen = ({ sadhanaData, sevaLogs: sevaLogsProp } = {}) => {
 // Progress Screen (§6.4)
 // ═══════════════════════════════════════════════════════════
 
-export const ProgressScreen = ({ progressStats: progressStatsProp, submissionHistory: submissionHistoryProp } = {}) => {
-  const progressStats = progressStatsProp || MockData.progressStats;
-  const submissionHistory = submissionHistoryProp || MockData.submissionHistory;
+export const ProgressScreen = ({ account, progressStats: progressStatsProp, submissionHistory: submissionHistoryProp } = {}) => {
+  const [progressStats, setProgressStats] = useState(progressStatsProp || MockData.progressStats);
+  const [submissionHistory, setSubmissionHistory] = useState(submissionHistoryProp || MockData.submissionHistory);
+  const [dataLoading, setDataLoading] = useState(false);
   const { colors } = useTheme();
   const [timescale, setTimescale] = useState('30');
+
+  useEffect(() => {
+    const load = async () => {
+      setDataLoading(true);
+      try {
+        const { items } = await SadhanaService.listSadhanaEntries(account?.id, { limit: 90 });
+        // Transform API response to match screen's expected format
+        // DB columns (camelCase): totalScore, mangalaArati, morningProgram, guruPuja, sbClass, tulasiPuja
+        const history = items.map(e => ({
+          date: e.date,
+          score: e.totalScore || 0,
+          mood: e.totalScore >= 80 ? 'Great' : e.totalScore >= 50 ? 'Good' : 'Needs Work',
+          mp: [!!e.mangalaArati, !!e.morningProgram, !!e.guruPuja, !!e.sbClass, !!e.tulasiPuja],
+        }));
+        if (history.length > 0) setSubmissionHistory(history);
+
+        // Compute progress stats from entries
+        if (items.length > 0) {
+          const scores = items.map(e => e.totalScore || 0).filter(Boolean);
+          const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+          setProgressStats(prev => ({ ...prev, avgScore }));
+        }
+      } catch { /* fallback to initial state */ }
+      setDataLoading(false);
+    };
+    load();
+  }, [account?.id]);
   const { data: paginatedHistory, hasMore: historyHasMore, loadMore: loadMoreHistory } = usePaginatedList(submissionHistory, { initialCount: 30, pageSize: 10 });
   const [activeTooltip, setActiveTooltip] = useState(null);
   const chartScale = useRef(new Animated.Value(1)).current;
@@ -506,9 +557,9 @@ export const ProgressScreen = ({ progressStats: progressStatsProp, submissionHis
   const timeFilteredData = submissionHistory.slice(0, parseInt(timescale));
   const chartData = timeFilteredData.slice().reverse();
 
-  // Dynamic y-axis
+  // Dynamic y-axis (guard against empty data → NaN)
   const scores = chartData.map(d => d.score);
-  const minScore = Math.min(...scores);
+  const minScore = scores.length > 0 ? Math.min(...scores) : 0;
   const yMin = Math.max(0, Math.floor((minScore - 10) / 5) * 5);
   const yMax = 100;
   const yLabels = Array.from({ length: 5 }, (_, i) =>
@@ -664,13 +715,42 @@ export const ProgressScreen = ({ progressStats: progressStatsProp, submissionHis
 // SevaBooks Screen (§6.5)
 // ═══════════════════════════════════════════════════════════
 
-export const SevaBooksScreen = ({ sevaLogs: sevaLogsProp, books: booksProp, bookCollections: bookCollectionsProp, courses: coursesProp } = {}) => {
-  const sevaLogsForDisplay = sevaLogsProp || MockData.sevaLogs;
-  const booksSource = booksProp || MockData.books;
-  const collectionsSource = bookCollectionsProp || MockData.bookCollections;
-  const coursesSource = coursesProp || MockData.courses;
+export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksProp, bookCollections: bookCollectionsProp, courses: coursesProp } = {}) => {
   const { colors } = useTheme();
   const showToast = useToast();
+
+  // API-fetched state
+  const [sevaLogsForDisplay, setSevaLogsForDisplay] = useState(sevaLogsProp || MockData.sevaLogs);
+  const [booksSource, setBooksSource] = useState(booksProp || MockData.books);
+  const collectionsSource = bookCollectionsProp || MockData.bookCollections;
+  const [coursesSource, setCoursesSource] = useState(coursesProp || MockData.courses);
+  const [courseOptions, setCourseOptions] = useState(
+    (MockData.adminSettingsLists?.['Courses'] || []).filter(c => c.active).map(c => c.name)
+  );
+  const [serviceDepts, setServiceDepts] = useState(
+    (MockData.adminSettingsLists?.['Service Departments'] || []).filter(d => d.active)
+  );
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [sevaRes, booksRes, coursesRes, courseRefsRes, deptRefsRes] = await Promise.all([
+          SevaService.listSevaLogs(account?.id),
+          BookService.listBooks(),
+          CourseService.listCourses(),
+          AdminService.listReferenceItems('Courses'),
+          AdminService.listReferenceItems('Service Departments'),
+        ]);
+        setSevaLogsForDisplay(sevaRes.items || sevaRes);
+        setBooksSource(booksRes);
+        setCoursesSource(coursesRes);
+        setCourseOptions(courseRefsRes.filter(c => c.active).map(c => c.name));
+        setServiceDepts(deptRefsRes.filter(d => d.active));
+      } catch { /* fallback to initial state */ }
+    };
+    load();
+  }, [account?.id]);
+
   const [activeTab, setActiveTab] = useState('seva');
   const [bookSearch, setBookSearch] = useState('');
   const [books, setBooks] = useState(booksSource.map(b => ({ ...b })));
@@ -686,7 +766,11 @@ export const SevaBooksScreen = ({ sevaLogs: sevaLogsProp, books: booksProp, book
   const [courseIsOther, setCourseIsOther] = useState(false);
   const [courseNotes, setCourseNotes] = useState('');
   const [courseDate, setCourseDate] = useState(new Date());
-  const courseOptions = (MockData.adminSettingsLists?.['Courses'] || []).filter(c => c.active).map(c => c.name);
+
+  // Update books state when API data arrives
+  useEffect(() => {
+    setBooks(booksSource.map(b => ({ ...b })));
+  }, [booksSource]);
   const bottomSheetRef = useRef(null);
   const courseSheetRef = useRef(null);
   // D3: Fade animation for sub-tab switching
@@ -950,7 +1034,7 @@ export const SevaBooksScreen = ({ sevaLogs: sevaLogsProp, books: booksProp, book
         <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Department</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deptScroll}>
-            {(MockData.adminSettingsLists['Service Departments'] || []).filter(d => d.active).map((dept) => (
+            {serviceDepts.map((dept) => (
               <TouchableOpacity
                 key={dept.name}
                 style={[styles.deptChip, { backgroundColor: colors.surface, borderColor: colors.border }, sevaDept === dept.name && { backgroundColor: colors.accent.peach, borderColor: colors.primary }]}
@@ -1049,10 +1133,45 @@ export const SevaBooksScreen = ({ sevaLogs: sevaLogsProp, books: booksProp, book
 // Profile Screen (§6.6)
 // ═══════════════════════════════════════════════════════════
 
-export const ProfileScreen = ({ onLogout }) => {
+export const ProfileScreen = ({ account, onLogout }) => {
   const { isDark, colors, toggleTheme } = useTheme();
   const showToast = useToast();
-  const profile = MockData.menteeProfile;
+  const [profile, setProfile] = useState(MockData.menteeProfile);
+  const [spiritualMasters, setSpiritualMasters] = useState(
+    (MockData.adminSettingsLists?.['Spiritual Masters'] || []).filter(sm => sm.active).map(sm => sm.name)
+  );
+  const [profileLoading, setProfileLoading] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      setProfileLoading(true);
+      try {
+        const [profileRes, smRes] = await Promise.all([
+          UserService.getUserProfile(account?.id),
+          AdminService.listReferenceItems('Spiritual Masters'),
+        ]);
+        if (profileRes) {
+          setProfile({
+            name: profileRes.firstName + (profileRes.lastName ? ' ' + profileRes.lastName : ''),
+            email: profileRes.email,
+            phone: profileRes.phone || '',
+            japaTarget: profileRes.japaTarget || 16,
+            dateJoined: profileRes.dateJoined || '',
+            initiatedName: profileRes.initiatedName || '',
+            spiritualMaster: profileRes.spiritualMaster || '',
+            dob: profileRes.dob || '',
+            address: profileRes.address || '',
+            initiationYear: profileRes.initiationYear || '',
+            mentor: profileRes.mentor || MockData.menteeProfile.mentor,
+          });
+        }
+        setSpiritualMasters(smRes.filter(sm => sm.active).map(sm => sm.name));
+      } catch { /* fallback to initial state */ }
+      setProfileLoading(false);
+    };
+    load();
+  }, [account?.id]);
+
   const profileSheetRef = useRef(null);
   const [editName, setEditName] = useState(profile.name);
   const [editEmail, setEditEmail] = useState(profile.email);
@@ -1064,7 +1183,19 @@ export const ProfileScreen = ({ onLogout }) => {
   const [editAddress, setEditAddress] = useState(profile.address || '');
   const [editInitiationYear, setEditInitiationYear] = useState(profile.initiationYear || '');
   const [smPickerOpen, setSmPickerOpen] = useState(false);
-  const spiritualMasters = (MockData.adminSettingsLists?.['Spiritual Masters'] || []).filter(sm => sm.active).map(sm => sm.name);
+
+  // Update edit fields when profile loads from API
+  useEffect(() => {
+    setEditName(profile.name);
+    setEditEmail(profile.email);
+    setEditPhone(profile.phone);
+    setEditJapaTarget(profile.japaTarget);
+    setEditInitiatedName(profile.initiatedName || '');
+    setEditSpiritualMaster(profile.spiritualMaster || '');
+    setEditDob(profile.dob || '');
+    setEditAddress(profile.address || '');
+    setEditInitiationYear(profile.initiationYear || '');
+  }, [profile]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>

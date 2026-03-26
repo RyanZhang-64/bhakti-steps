@@ -1,21 +1,35 @@
 /**
  * api/client.js
  * ──────────────────────────────────────────────────────────────
- * Central API client. All service files import from here.
- * When Amplify is not yet configured, falls back to mock data.
+ * Central Supabase client. All service files import from here.
+ * When Supabase is not configured, falls back to mock data.
  * ──────────────────────────────────────────────────────────────
  */
 
-let _client = null;
+import { createClient } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config';
+
+let _supabase = null;
 let _isConfigured = false;
 
 /**
- * Initialize the API client. Call once after Amplify.configure().
+ * Initialize the Supabase client. Call once at app startup.
  */
 export const initApiClient = () => {
   try {
-    const { generateClient } = require('aws-amplify/api');
-    _client = generateClient();
+    if (!SUPABASE_URL || SUPABASE_URL.includes('YOUR_PROJECT')) {
+      _isConfigured = false;
+      return;
+    }
+    _supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        storage: AsyncStorage,
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: false,
+      },
+    });
     _isConfigured = true;
   } catch {
     _isConfigured = false;
@@ -23,9 +37,9 @@ export const initApiClient = () => {
 };
 
 /**
- * Get the GraphQL client. Returns null if Amplify is not configured.
+ * Get the Supabase client. Returns null if not configured.
  */
-export const getClient = () => _client;
+export const getClient = () => _supabase;
 
 /**
  * Check if we're using the live backend or mock data.

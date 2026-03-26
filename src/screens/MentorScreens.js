@@ -6,7 +6,7 @@
  * ──────────────────────────────────────────────────────────────
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,8 @@ import {
   Linking,
   KeyboardAvoidingView,
   Platform,
+  Share,
+  ActivityIndicator,
 } from 'react-native';
 import Svg, { Line, Polyline, Polygon, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import { Card } from '../components/Card';
@@ -28,6 +30,7 @@ import { colors, spacing, typography, radius } from '../theme';
 import { useTheme } from '../ThemeContext';
 import { ToggleSwitch } from '../components/ToggleSwitch';
 import { MockData } from '../mockData';
+import { BatchService, UserService, SadhanaService, SevaService, CourseService, MentorNoteService, InviteService } from '../api';
 import {
   Cake,
   X,
@@ -53,10 +56,27 @@ import {
 // Dashboard Screen (§6.7)
 // ═══════════════════════════════════════════════════════════
 
-export const MentorDashboardScreen = ({ onNavigate, onTabSwitch }) => {
+export const MentorDashboardScreen = ({ account, onNavigate, onTabSwitch }) => {
   const { colors } = useTheme();
-  const dashboard = MockData.mentorDashboard;
+  const [dashboard, setDashboard] = useState(MockData.mentorDashboard);
+  const [batches, setBatches] = useState(MockData.batches);
   const [dismissedBirthdays, setDismissedBirthdays] = useState([]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [batchRes, menteesRes] = await Promise.all([
+          BatchService.listBatchesByMentor(account?.id),
+          UserService.listMenteesByMentor(account?.id),
+        ]);
+        if (batchRes?.length) setBatches(batchRes);
+        if (menteesRes?.length) {
+          setDashboard(prev => ({ ...prev, totalMentees: menteesRes.length }));
+        }
+      } catch { /* fallback */ }
+    };
+    load();
+  }, [account?.id]);
 
   const visibleBirthdays = dashboard.birthdays.filter((_, i) => !dismissedBirthdays.includes(i));
 
@@ -128,7 +148,7 @@ export const MentorDashboardScreen = ({ onNavigate, onTabSwitch }) => {
 
       {/* Batches */}
       <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Batches</Text>
-      {MockData.batches.map((batch, index) => (
+      {batches.map((batch, index) => (
         <Card key={index} variant="form" onPress={() => onNavigate?.('batchDetail')}>
           <View style={styles.batchHeader}>
             <Text style={[styles.batchName, { color: colors.text.primary }]}>{batch.name}</Text>
@@ -167,9 +187,19 @@ export const MentorDashboardScreen = ({ onNavigate, onTabSwitch }) => {
 // Batches List Screen (§6.8 – list view)
 // ═══════════════════════════════════════════════════════════
 
-export const BatchesListScreen = ({ onNavigate }) => {
+export const BatchesListScreen = ({ account, onNavigate }) => {
   const { colors } = useTheme();
-  const batches = MockData.batches;
+  const [batches, setBatches] = useState(MockData.batches);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await BatchService.listBatchesByMentor(account?.id);
+        if (res?.length) setBatches(res);
+      } catch { /* fallback */ }
+    };
+    load();
+  }, [account?.id]);
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
@@ -212,10 +242,33 @@ const HISTORY_ICONS = {
   allocation: PencilSimple,
 };
 
-export const BatchDetailScreen = ({ onBack, onNavigate }) => {
+export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
   const { colors } = useTheme();
-  const batch = MockData.batches[0];
+  const [batch, setBatch] = useState(MockData.batches[0]);
   const showToast = useToast();
+  const [inviting, setInviting] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await BatchService.listBatchesByMentor(account?.id);
+        if (res?.length) setBatch(res[0]);
+      } catch { /* fallback */ }
+    };
+    load();
+  }, [account?.id]);
+
+  const handleInviteMentee = async () => {
+    setInviting(true);
+    try {
+      const { shareUrl } = await InviteService.createInvite({ role: 'mentee', batchId: batch.id });
+      await Share.share({ message: `You've been invited to join Bhakti Steps! Register here: ${shareUrl}` });
+      showToast?.('Invite link ready to share', 'success');
+    } catch (err) {
+      showToast?.(err.message || 'Failed to create invite', 'error');
+    }
+    setInviting(false);
+  };
   const [activeSessionIndex, setActiveSessionIndex] = useState(0);
   const sessionDetailRef = useRef(null);
   const editBatchRef = useRef(null);
@@ -487,10 +540,8 @@ export const BatchDetailScreen = ({ onBack, onNavigate }) => {
           <Button variant="secondary" onPress={() => editBatchRef.current?.present()}>
             Edit Batch
           </Button>
-          <Button variant="secondary" onPress={() => {
-            showToast('Invite link copied! Share with your mentee to join this batch.', 'success');
-          }}>
-            Invite Mentee
+          <Button variant="secondary" onPress={handleInviteMentee} disabled={inviting}>
+            {inviting ? 'Creating Invite...' : 'Invite Mentee'}
           </Button>
           <Button variant="primary" onPress={() => {
             setNewSessionName('');
@@ -682,25 +733,46 @@ export const BatchDetailScreen = ({ onBack, onNavigate }) => {
 // Mentee Detail Screen (§6.9) — Enhanced
 // ═══════════════════════════════════════════════════════════
 
-export const MenteeDetailScreen = ({ onBack, onRemoveUser, headerExtra }) => {
+export const MenteeDetailScreen = ({ account, onBack, onRemoveUser, headerExtra }) => {
   const { colors } = useTheme();
-  const mentee = MockData.menteeDetail;
+  const [mentee, setMentee] = useState(MockData.menteeDetail);
   const [activeTab, setActiveTab] = useState('sadhana');
   const [noteText, setNoteText] = useState('');
   const [notes, setNotes] = useState(mentee.notes);
+  const [sevaLogs, setSevaLogs] = useState(MockData.sevaLogs);
+  const [courses, setCourses] = useState(MockData.courses);
+  const [attendance, setAttendance] = useState(attendance);
   const [timescale, setTimescale] = useState('7');
   const sessionDetailRef = useRef(null);
   const [selectedSession, setSelectedSession] = useState(null);
 
-  const handleSendNote = () => {
+  useEffect(() => {
+    const load = async () => {
+      try {
+        // In a real implementation, menteeId would be passed as a prop
+        // For now we use the mock data as fallback
+        const [sevaRes, coursesRes] = await Promise.all([
+          SevaService.listSevaLogs(mentee.id || account?.id),
+          CourseService.listCourses(),
+        ]);
+        if (sevaRes?.items) setSevaLogs(sevaRes.items);
+        if (coursesRes?.length) setCourses(coursesRes);
+      } catch { /* fallback */ }
+    };
+    load();
+  }, [mentee.id, account?.id]);
+
+  const handleSendNote = async () => {
     if (!noteText.trim()) return;
+    try {
+      await MentorNoteService.createNote(account?.id, mentee.id, noteText.trim());
+    } catch { /* still show locally */ }
     setNotes([{ date: 'Just now', text: noteText.trim() }, ...notes]);
     setNoteText('');
   };
 
   const openSessionFromAttendance = (entry) => {
-    // Find matching session from batch sessions data
-    const sessions = MockData.batches[0].sessions || [];
+    const sessions = (mentee.batch ? MockData.batches[0].sessions : MockData.batches[0].sessions) || [];
     const match = sessions.find(s => s.title === entry.session);
     if (match) {
       setSelectedSession(match);
@@ -710,8 +782,8 @@ export const MenteeDetailScreen = ({ onBack, onRemoveUser, headerExtra }) => {
 
   const tabs = ['sadhana', 'seva', 'courses', 'attendance', 'notes'];
 
-  // I2: Chart data (reuse mentee's submission history for David)
-  const chartDataAll = MockData.submissionHistory;
+  // I2: Chart data (reuse mentee's submission history)
+  const chartDataAll = MockData.submissionHistory; // TODO: fetch mentee-specific history via SadhanaService
   const timeFilteredData = chartDataAll.slice(0, parseInt(timescale));
   const chartData = timeFilteredData.slice().reverse();
   const scores = chartData.map(d => d.score);
@@ -882,7 +954,7 @@ export const MenteeDetailScreen = ({ onBack, onRemoveUser, headerExtra }) => {
         {/* I3: Seva tab — styled consistently */}
         {activeTab === 'seva' && (
           <View>
-            {MockData.sevaLogs.map((log, index) => (
+            {sevaLogs.map((log, index) => (
               <Card key={index} variant="form" style={{ marginBottom: spacing.sm }}>
                 <View style={styles.sevaHeader}>
                   <Text style={[styles.sevaDate, { color: colors.text.primary }]}>{log.date}</Text>
@@ -900,7 +972,7 @@ export const MenteeDetailScreen = ({ onBack, onRemoveUser, headerExtra }) => {
         {/* I3: Courses tab — styled consistently */}
         {activeTab === 'courses' && (
           <View>
-            {MockData.courses.map((course, index) => (
+            {courses.map((course, index) => (
               <Card key={index} variant="form" style={{ marginBottom: spacing.sm }}>
                 <Text style={[styles.courseName, { color: colors.text.primary }]}>{course.name}</Text>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: spacing.xs }}>
@@ -929,7 +1001,7 @@ export const MenteeDetailScreen = ({ onBack, onRemoveUser, headerExtra }) => {
                 <View style={styles.statValue}>
                   <Fire size={16} color={colors.status.error} weight="fill" />
                   <Text style={[styles.statNumber, { color: colors.text.primary }]}>
-                    {(() => { let s = 0; for (const e of MockData.menteeDetailAttendance) { if (e.status === 'present') s++; else break; } return s; })()}
+                    {(() => { let s = 0; for (const e of attendance) { if (e.status === 'present') s++; else break; } return s; })()}
                   </Text>
                 </View>
                 <Text style={[styles.statLabel, { color: colors.text.secondary }]}>Streak</Text>
@@ -938,14 +1010,14 @@ export const MenteeDetailScreen = ({ onBack, onRemoveUser, headerExtra }) => {
                 <View style={styles.statValue}>
                   <Star size={16} color={colors.text.primary} weight="fill" />
                   <Text style={[styles.statNumber, { color: colors.text.primary }]}>
-                    {Math.round(MockData.menteeDetailAttendance.filter(e => e.status === 'present').length / MockData.menteeDetailAttendance.length * 100)}%
+                    {Math.round(attendance.filter(e => e.status === 'present').length / attendance.length * 100)}%
                   </Text>
                 </View>
                 <Text style={[styles.statLabel, { color: colors.text.secondary }]}>Rate</Text>
               </View>
             </View>
 
-            {MockData.menteeDetailAttendance.map((entry, index) => (
+            {attendance.map((entry, index) => (
               <TouchableOpacity key={index} style={[styles.attendanceRow, { borderBottomColor: colors.border }]} onPress={() => openSessionFromAttendance(entry)}>
                 <View>
                   <Text style={[styles.attendanceDateText, { color: colors.text.primary }]}>{entry.date}</Text>
@@ -1034,11 +1106,22 @@ export const MenteeDetailScreen = ({ onBack, onRemoveUser, headerExtra }) => {
 // Approvals Screen (§6.10) — J1: trailing border fix
 // ═══════════════════════════════════════════════════════════
 
-export const ApprovalsScreen = () => {
+export const ApprovalsScreen = ({ account }) => {
   const { colors } = useTheme();
   const approvalSheetRef = useRef(null);
+  const [pendingApprovals, setPendingApprovals] = useState(MockData.pendingApprovals);
   const [selectedApproval, setSelectedApproval] = useState(null);
   const [approvalComment, setApprovalComment] = useState('');
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await CourseService.listPendingApprovals();
+        if (res?.length) setPendingApprovals(res);
+      } catch { /* fallback */ }
+    };
+    load();
+  }, []);
 
   const openReview = (approval) => {
     setSelectedApproval(approval);
@@ -1055,7 +1138,7 @@ export const ApprovalsScreen = () => {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={[styles.screenTitle, { color: colors.text.primary }]}>Pending Approvals</Text>
 
-        {MockData.pendingApprovals.map((approval, index) => (
+        {pendingApprovals.map((approval, index) => (
           <Card key={index} variant="form" style={styles.approvalCard}>
             <View style={styles.approvalHeader}>
               <View>
@@ -1127,7 +1210,7 @@ export const ApprovalsScreen = () => {
 
 import { TodayScreen, ProgressScreen, SevaBooksScreen } from './MenteeScreens';
 
-export const MentorSadhanaScreen = () => {
+export const MentorSadhanaScreen = ({ account }) => {
   const { colors } = useTheme();
   const [activeView, setActiveView] = useState('today');
   const mentorData = MockData.mentorSadhana;
@@ -1158,9 +1241,9 @@ export const MentorSadhanaScreen = () => {
 
       {/* Content */}
       <View style={{ flex: 1 }}>
-        {activeView === 'today' && <TodayScreen sadhanaData={sadhanaData} sevaLogs={mentorData.sevaLogs} />}
-        {activeView === 'progress' && <ProgressScreen progressStats={mentorData.progressStats} submissionHistory={mentorData.submissionHistory} />}
-        {activeView === 'seva' && <SevaBooksScreen sevaLogs={mentorData.sevaLogs} courses={mentorData.courses} />}
+        {activeView === 'today' && <TodayScreen account={account} sadhanaData={sadhanaData} sevaLogs={mentorData.sevaLogs} />}
+        {activeView === 'progress' && <ProgressScreen account={account} progressStats={mentorData.progressStats} submissionHistory={mentorData.submissionHistory} />}
+        {activeView === 'seva' && <SevaBooksScreen account={account} sevaLogs={mentorData.sevaLogs} courses={mentorData.courses} />}
       </View>
     </View>
   );
@@ -1170,10 +1253,33 @@ export const MentorSadhanaScreen = () => {
 // Mentor Profile Screen
 // ═══════════════════════════════════════════════════════════
 
-export const MentorProfileScreen = ({ onLogout }) => {
+export const MentorProfileScreen = ({ account, onLogout }) => {
   const { isDark, colors, toggleTheme } = useTheme();
   const showToast = useToast();
-  const profile = MockData.mentorProfile;
+  const [profile, setProfile] = useState(MockData.mentorProfile);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await UserService.getUserProfile(account?.id);
+        if (res) {
+          setProfile({
+            name: res.firstName + (res.lastName ? ' ' + res.lastName : ''),
+            email: res.email,
+            phone: res.phone || '',
+            japaTarget: res.japaTarget || 16,
+            dateJoined: res.dateJoined || '',
+            initiatedName: res.initiatedName || '',
+            spiritualMaster: res.spiritualMaster || '',
+            initiationYear: res.initiationYear || '',
+            dob: res.dob || '',
+            address: res.address || '',
+          });
+        }
+      } catch { /* fallback */ }
+    };
+    load();
+  }, [account?.id]);
   const profileSheetRef = useRef(null);
   const [editName, setEditName] = useState(profile.name);
   const [editEmail, setEditEmail] = useState(profile.email);

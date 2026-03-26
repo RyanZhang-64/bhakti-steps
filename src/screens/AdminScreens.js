@@ -6,7 +6,7 @@
  * ──────────────────────────────────────────────────────────────
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,8 @@ import {
   TextInput,
   StyleSheet,
   Alert,
+  Share,
+  ActivityIndicator,
 } from 'react-native';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -25,6 +27,7 @@ import { useTheme } from '../ThemeContext';
 import { useToast } from '../components/Toast';
 import { ToggleSwitch } from '../components/ToggleSwitch';
 import { MockData } from '../mockData';
+import { AdminService, UserService, BatchService, InviteService } from '../api';
 import { usePaginatedList } from '../hooks/usePaginatedList';
 import { PaginatedScrollView } from '../components/PaginatedScrollView';
 import {
@@ -47,13 +50,29 @@ import { MenteeDetailScreen } from './MentorScreens';
 // Dashboard Screen (§6.11)
 // ═══════════════════════════════════════════════════════════
 
-export const AdminDashboardScreen = () => {
+export const AdminDashboardScreen = ({ account }) => {
   const { colors } = useTheme();
   const showToast = useToast();
   const kpiSheetRef = useRef(null);
   const [selectedKPI, setSelectedKPI] = useState(null);
   const [pendingApps, setPendingApps] = useState([...MockData.pendingMentorApplications]);
+  const [kpis, setKpis] = useState(MockData.adminKPIs);
+  const [growthData, setGrowthData] = useState(MockData.adminGrowthData);
   const [growthMetric, setGrowthMetric] = useState('users');
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [kpiRes, pendingRes] = await Promise.all([
+          AdminService.getAdminKPIs(),
+          UserService.listPendingUsers(),
+        ]);
+        if (kpiRes) setKpis(Array.isArray(kpiRes) ? kpiRes : MockData.adminKPIs);
+        if (pendingRes?.length) setPendingApps(pendingRes);
+      } catch { /* fallback */ }
+    };
+    load();
+  }, []);
 
   const openKPIDrilldown = (kpiLabel) => {
     setSelectedKPI(kpiLabel);
@@ -103,7 +122,7 @@ export const AdminDashboardScreen = () => {
         <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Platform KPIs</Text>
 
         <View style={styles.kpiGrid}>
-          {MockData.adminKPIs.map((kpi, index) => (
+          {kpis.map((kpi, index) => (
             <Card key={index} variant="dashboard" style={styles.kpiCard} onPress={() => openKPIDrilldown(kpi.label)}>
               <Text style={[styles.kpiValue, { color: colors.text.primary }]}>{kpi.value}</Text>
               <Text style={[styles.kpiLabel, { color: colors.text.secondary }]}>{kpi.label}</Text>
@@ -147,7 +166,7 @@ export const AdminDashboardScreen = () => {
           </View>
           {/* SVG Chart */}
           {(() => {
-            const gd = MockData.adminGrowthData;
+            const gd = growthData;
             const data = growthMetric === 'users' ? gd.activeUsers : gd.submissionRate;
             const W = 280, H = 120, px = 10, py = 10;
             const maxVal = Math.max(...data) * 1.1;
@@ -248,11 +267,36 @@ export const AdminDashboardScreen = () => {
 // Users Screen (§6.12)
 // ═══════════════════════════════════════════════════════════
 
-export const UsersScreen = ({ onNavigate }) => {
+export const UsersScreen = ({ account, onNavigate }) => {
   const { colors } = useTheme();
+  const showToast = useToast();
+  const [allUsers, setAllUsers] = useState(MockData.adminUsers);
   const [filter, setFilter] = useState('All');
   const [search, setSearch] = useState('');
+  const [inviting, setInviting] = useState(false);
   const filters = ['All', 'Mentors', 'Mentees', 'Pending'];
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const { items } = await UserService.listAllUsers();
+        if (items?.length) setAllUsers(items);
+      } catch { /* fallback */ }
+    };
+    load();
+  }, []);
+
+  const handleInvite = async (role) => {
+    setInviting(true);
+    try {
+      const { shareUrl } = await InviteService.createInvite({ role });
+      await Share.share({ message: `You've been invited to join Bhakti Steps as a ${role}! Register here: ${shareUrl}` });
+      showToast?.('Invite link ready to share', 'success');
+    } catch (err) {
+      showToast?.(err.message || 'Failed to create invite', 'error');
+    }
+    setInviting(false);
+  };
 
   const getRoleStyle = (role) => {
     switch (role) {
@@ -267,7 +311,7 @@ export const UsersScreen = ({ onNavigate }) => {
     }
   };
 
-  const filteredUsers = MockData.adminUsers.filter((user) => {
+  const filteredUsers = allUsers.filter((user) => {
     const matchesSearch = !search ||
       user.name.toLowerCase().includes(search.toLowerCase()) ||
       user.email.toLowerCase().includes(search.toLowerCase());
@@ -344,8 +388,11 @@ export const UsersScreen = ({ onNavigate }) => {
         </TouchableOpacity>
       ))}
 
-      <Button variant="primary" style={styles.inviteButton}>
-        Invite Mentor
+      <Button variant="primary" style={styles.inviteButton} onPress={() => handleInvite('mentor')} disabled={inviting}>
+        {inviting ? 'Creating Invite...' : 'Invite Mentor'}
+      </Button>
+      <Button variant="secondary" style={{ marginTop: spacing.sm }} onPress={() => handleInvite('mentee')} disabled={inviting}>
+        {inviting ? 'Creating Invite...' : 'Invite Mentee'}
       </Button>
     </PaginatedScrollView>
   );
@@ -355,11 +402,10 @@ export const UsersScreen = ({ onNavigate }) => {
 // Admin User Detail Screen — reuses MenteeDetailScreen
 // ═══════════════════════════════════════════════════════════
 
-export const AdminUserDetailScreen = ({ onBack }) => {
+export const AdminUserDetailScreen = ({ account, onBack }) => {
   const { colors } = useTheme();
   const showToast = useToast();
   const reassignSheetRef = useRef(null);
-  // For demo, use first mentor from adminUsers
   const [userRoles, setUserRoles] = useState(MockData.adminUsers[0].roles);
   const isAdmin = userRoles.includes('admin');
   const isMentee = userRoles.includes('mentee');
@@ -438,7 +484,7 @@ export const AdminUserDetailScreen = ({ onBack }) => {
       <BottomSheet ref={reassignSheetRef} snapPoints={['50%']} title="Reassign to Batch">
         <ScrollView>
           <Text style={[typography.caption, { color: colors.text.secondary, marginBottom: spacing.md }]}>Select a batch to reassign this user:</Text>
-          {MockData.adminBatchOptions.map(batch => (
+          {(MockData.adminBatchOptions || []).map(batch => (
             <TouchableOpacity
               key={batch.id}
               style={[styles.reassignRow, { borderBottomColor: colors.border }]}
@@ -461,15 +507,26 @@ export const AdminUserDetailScreen = ({ onBack }) => {
 // Batch Oversight Screen (§6.13)
 // ═══════════════════════════════════════════════════════════
 
-export const BatchOversightScreen = () => {
+export const BatchOversightScreen = ({ account }) => {
   const { colors } = useTheme();
+  const [allBatches, setAllBatches] = useState(MockData.adminBatches);
   const [filter, setFilter] = useState('All');
   const filters = ['All', 'Active', 'Pending Approval', 'Inactive'];
   const batchApprovalRef = useRef(null);
   const [selectedBatch, setSelectedBatch] = useState(null);
   const [adminNote, setAdminNote] = useState('');
 
-  const filteredBatches = MockData.adminBatches.filter((batch) => {
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await BatchService.listAllBatches();
+        if (res?.length) setAllBatches(res);
+      } catch { /* fallback */ }
+    };
+    load();
+  }, []);
+
+  const filteredBatches = allBatches.filter((batch) => {
     if (filter === 'All') return true;
     if (filter === 'Active') return batch.status === 'active';
     if (filter === 'Pending Approval') return batch.status === 'pending';
@@ -575,7 +632,7 @@ export const BatchOversightScreen = () => {
 // Settings Screen (§6.14)
 // ═══════════════════════════════════════════════════════════
 
-export const SettingsScreen = ({ onLogout, onNavigate }) => {
+export const SettingsScreen = ({ account, onLogout, onNavigate }) => {
   const { isDark, colors, toggleTheme } = useTheme();
   const showToast = useToast();
   const settingsItems = [
@@ -596,9 +653,24 @@ export const SettingsScreen = ({ onLogout, onNavigate }) => {
   const [scoringConfig, setScoringConfig] = useState({ ...MockData.sadhanaScoring });
   const scoringTotal = scoringConfig.roundsWeight + scoringConfig.morningProgrammeWeight + scoringConfig.bookReadingWeight + scoringConfig.moodWeight + scoringConfig.sevaWeight;
 
-  const openSettingsList = (key) => {
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await AdminService.getScoringConfig();
+        if (res) setScoringConfig(res);
+      } catch { /* fallback */ }
+    };
+    load();
+  }, []);
+
+  const openSettingsList = async (key) => {
     setSelectedSettingKey(key);
-    setSettingsList([...MockData.adminSettingsLists[key]]);
+    try {
+      const items = await AdminService.listReferenceItems(key);
+      setSettingsList(items?.length ? items : [...(MockData.adminSettingsLists[key] || [])]);
+    } catch {
+      setSettingsList([...(MockData.adminSettingsLists[key] || [])]);
+    }
     setNewItemText('');
     settingsSheetRef.current?.present();
   };
@@ -978,12 +1050,23 @@ const AUDIT_TYPE_ICONS = {
 };
 const AUDIT_FILTER_CHIPS = ['All', 'User', 'Batch', 'Attendance', 'Course', 'Invite', 'Role'];
 
-export const AuditLogScreen = ({ onBack }) => {
+export const AuditLogScreen = ({ account, onBack }) => {
   const { colors } = useTheme();
+  const [auditLog, setAuditLog] = useState(MockData.auditLog);
   const [activeFilter, setActiveFilter] = useState('All');
   const [searchText, setSearchText] = useState('');
 
-  const filtered = MockData.auditLog.filter(entry => {
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const { items } = await AdminService.getAuditLog();
+        if (items?.length) setAuditLog(items);
+      } catch { /* fallback */ }
+    };
+    load();
+  }, []);
+
+  const filtered = auditLog.filter(entry => {
     if (activeFilter !== 'All' && entry.type !== activeFilter.toLowerCase()) return false;
     if (searchText.trim()) {
       const q = searchText.toLowerCase();

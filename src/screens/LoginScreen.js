@@ -1,7 +1,8 @@
 /**
  * screens/LoginScreen.js
  * ──────────────────────────────────────────────────────────────
- * Mock login screen with email/password authentication.
+ * Login screen with Supabase Auth (falls back to mock data).
+ * Invite-only — no open registration link.
  * ──────────────────────────────────────────────────────────────
  */
 
@@ -17,32 +18,39 @@ import {
   Platform,
   StatusBar,
   SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
 import { Eye, EyeSlash } from 'phosphor-react-native';
 import { useTheme } from '../ThemeContext';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { spacing, typography, radius } from '../theme';
-import { MockData } from '../mockData';
+import { AuthService } from '../api';
 
-export const LoginScreen = ({ onLogin, onNavigateRegister }) => {
+export const LoginScreen = ({ onLogin }) => {
   const { isDark, colors } = useTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [loading, setLoading] = useState(false);
   const [focusedField, setFocusedField] = useState(null);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     setErrorMsg('');
-    const found = MockData.accounts.find(
-      a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password
-    );
-    if (!found) {
-      setErrorMsg('Incorrect email or password.');
+    if (!email.trim() || !password) {
+      setErrorMsg('Please enter email and password.');
       return;
     }
-    onLogin(found);
+    setLoading(true);
+    try {
+      const account = await AuthService.signIn(email.trim().toLowerCase(), password);
+      onLogin(account);
+    } catch (err) {
+      setErrorMsg(err.message || 'Incorrect email or password.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleEmailChange = (text) => {
@@ -132,14 +140,14 @@ export const LoginScreen = ({ onLogin, onNavigateRegister }) => {
               )}
 
               {/* Submit */}
-              <Button variant="primary" onPress={handleLogin} style={styles.loginButton}>
-                Sign In
+              <Button variant="primary" onPress={handleLogin} style={styles.loginButton} disabled={loading}>
+                {loading ? <ActivityIndicator size="small" color="#fff" /> : 'Sign In'}
               </Button>
 
-              {/* Register link */}
-              <Button variant="text" onPress={onNavigateRegister} style={styles.registerButton}>
-                Don't have an account? Sign Up
-              </Button>
+              {/* Invite-only notice */}
+              <Text style={[styles.inviteNotice, { color: colors.text.secondary }]}>
+                Registration is by invite only. Ask your mentor or admin for an invite link.
+              </Text>
             </Card>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -211,7 +219,10 @@ const styles = StyleSheet.create({
   loginButton: {
     marginTop: spacing.md,
   },
-  registerButton: {
-    marginTop: spacing.sm,
+  inviteNotice: {
+    ...typography.caption,
+    textAlign: 'center',
+    marginTop: spacing.lg,
+    lineHeight: 18,
   },
 });

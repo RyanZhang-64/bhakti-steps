@@ -2,41 +2,18 @@
  * api/sadhana.js
  * ──────────────────────────────────────────────────────────────
  * Sadhana entry CRUD operations.
- * Falls back to MockData when Amplify is not configured.
+ * Falls back to MockData when Supabase is not configured.
  * ──────────────────────────────────────────────────────────────
  */
 
 import { getClient, isBackendConnected } from './client';
+import { toCamel, toSnake } from './helpers';
 import { MockData } from '../mockData';
-
-const LIST_SADHANA = /* GraphQL */ `
-  query SadhanaByUserDate($userId: ID!, $date: ModelStringKeyConditionInput, $limit: Int, $nextToken: String) {
-    sadhanaByUserDate(userId: $userId, date: $date, limit: $limit, nextToken: $nextToken, sortDirection: DESC) {
-      items {
-        id userId date japaRounds score mood
-        mangalaArati japaMeditation guruPuja bhagavatamClass tulasiPuja eveningKirtana
-        bookReadingMinutes createdAt
-      }
-      nextToken
-    }
-  }
-`;
-
-const CREATE_SADHANA = /* GraphQL */ `
-  mutation CreateSadhanaEntry($input: CreateSadhanaEntryInput!) {
-    createSadhanaEntry(input: $input) {
-      id userId date japaRounds score mood
-    }
-  }
-`;
 
 /**
  * Fetch sadhana entries for a user, optionally filtered by date range.
- * @param {string} userId
- * @param {object} opts - { limit, nextToken, dateFrom, dateTo }
- * @returns {{ items: Array, nextToken: string|null }}
  */
-export const listSadhanaEntries = async (userId, { limit = 30, nextToken = null, dateFrom, dateTo } = {}) => {
+export const listSadhanaEntries = async (userId, { limit = 30, offset = 0, dateFrom, dateTo } = {}) => {
   if (!isBackendConnected()) {
     const items = MockData.submissionHistory.map((entry, i) => ({
       id: String(i),
@@ -46,33 +23,28 @@ export const listSadhanaEntries = async (userId, { limit = 30, nextToken = null,
       score: entry.score,
       mood: entry.mood,
       mangalaArati: entry.mp[0],
-      japaMeditation: entry.mp[1],
+      morningProgram: entry.mp[1],
       guruPuja: entry.mp[2],
-      bhagavatamClass: entry.mp[3],
+      sbClass: entry.mp[3],
       tulasiPuja: entry.mp[4],
-      eveningKirtana: entry.mp[5],
     }));
-    return { items: items.slice(0, limit), nextToken: null };
+    return { items: items.slice(offset, offset + limit), hasMore: offset + limit < items.length };
   }
 
-  const dateCondition = {};
-  if (dateFrom && dateTo) {
-    dateCondition.between = [dateFrom, dateTo];
-  } else if (dateFrom) {
-    dateCondition.ge = dateFrom;
-  }
+  let query = getClient()
+    .from('sadhana_entries')
+    .select('*')
+    .eq('user_id', userId)
+    .order('date', { ascending: false })
+    .range(offset, offset + limit - 1);
 
-  const result = await getClient().graphql({
-    query: LIST_SADHANA,
-    variables: {
-      userId,
-      date: Object.keys(dateCondition).length ? dateCondition : undefined,
-      limit,
-      nextToken,
-    },
-  });
+  if (dateFrom) query = query.gte('date', dateFrom);
+  if (dateTo) query = query.lte('date', dateTo);
 
-  return result.data.sadhanaByUserDate;
+  const { data, error } = await query;
+  if (error) throw error;
+
+  return { items: data.map(toCamel), hasMore: data.length === limit };
 };
 
 /**
@@ -83,10 +55,12 @@ export const createSadhanaEntry = async (entry) => {
     return { id: Date.now().toString(), ...entry };
   }
 
-  const result = await getClient().graphql({
-    query: CREATE_SADHANA,
-    variables: { input: entry },
-  });
+  const { data, error } = await getClient()
+    .from('sadhana_entries')
+    .insert(toSnake(entry))
+    .select()
+    .single();
 
-  return result.data.createSadhanaEntry;
+  if (error) throw error;
+  return toCamel(data);
 };
