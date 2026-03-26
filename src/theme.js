@@ -16,7 +16,7 @@ const statusColors = {
 
 // ── Light palette (Autumn Sunset) ──────────────────────
 export const lightColors = {
-  primary: '#B23A48',
+  primary: '#000000',
   primaryPressed: '#8C2F39',
   background: '#FED0BB',
   surface: '#FFFFFF',

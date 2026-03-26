@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep \"MockData\\\\.\" /c/Users/zyanr/bhakti-steps/src/screens/*.js)",
+      "Bash(grep -n \"onNavigate.*\\\\\\(''''\" /c/Users/zyanr/bhakti-steps/src/screens/*.js)",
+      "Bash(node -c /c/Users/zyanr/bhakti-steps/src/ThemeContext.js)",
+      "Bash(node -c /c/Users/zyanr/bhakti-steps/src/mockData.js)",
+      "Bash(node -c /c/Users/zyanr/bhakti-steps/src/theme.js)",
+      "Bash(node -c /c/Users/zyanr/bhakti-steps/src/hooks/usePaginatedList.js)",
+      "Bash(find /c/Users/zyanr/bhakti-steps -type f -name *.docx -o -name *spec* -o -name README*)",
+      "Bash(find /c/Users/zyanr/bhakti-steps -type f \\\\\\(-name *.graphql -o -name *schema* -o -name *api* -o -name amplify* \\\\\\))"
+    ]
+  }
+}

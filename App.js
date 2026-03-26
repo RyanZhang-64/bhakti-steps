@@ -6,6 +6,11 @@
  * ──────────────────────────────────────────────────────────────
  */
 
+// AWS Amplify — uncomment after running `amplify init` + `amplify push`
+// import { Amplify } from 'aws-amplify';
+// import amplifyconfig from './src/amplifyconfiguration.json';
+// Amplify.configure(amplifyconfig);
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
@@ -40,7 +45,8 @@ import {
   BatchDetailScreen,
   MenteeDetailScreen,
   ApprovalsScreen,
-  MentorProfileScreen
+  MentorProfileScreen,
+  MentorSadhanaScreen,
 } from './src/screens/MentorScreens';
 import {
   AdminDashboardScreen,
@@ -48,6 +54,8 @@ import {
   BatchOversightScreen,
   SettingsScreen,
   AdminUserDetailScreen,
+  AuditLogScreen,
+  DataEditorScreen,
 } from './src/screens/AdminScreens';
 
 // Data
@@ -90,6 +98,7 @@ const MENTEE_SCREENS = {
 };
 
 const MENTOR_SCREENS = {
+  sadhana: MentorSadhanaScreen,
   dashboard: MentorDashboardScreen,
   batches: BatchesListScreen,
   approvals: ApprovalsScreen,
@@ -120,6 +129,7 @@ function AppContent() {
   const [currentRole, setCurrentRole] = useState('mentee');
   const [currentTab, setCurrentTab] = useState('today');
   const [drillDownScreen, setDrillDownScreen] = useState(null);
+  const [selectedTable, setSelectedTable] = useState(null);
   const notificationSheetRef = useRef(null);
   const drillDownOpacity = useRef(new Animated.Value(0)).current;
 
@@ -218,7 +228,8 @@ function AppContent() {
   };
 
   // Handle navigation to drill-down screens
-  const handleNavigate = (screen) => {
+  const handleNavigate = (screen, data) => {
+    if (screen === 'dataEditor') setSelectedTable(data);
     setDrillDownScreen(screen);
   };
 
@@ -239,6 +250,12 @@ function AppContent() {
           break;
         case 'adminUserDetail':
           drillDownContent = <AdminUserDetailScreen onBack={handleBack} />;
+          break;
+        case 'auditLog':
+          drillDownContent = <AuditLogScreen onBack={handleBack} />;
+          break;
+        case 'dataEditor':
+          drillDownContent = <DataEditorScreen onBack={handleBack} tableName={selectedTable} />;
           break;
         default:
           setDrillDownScreen(null);
@@ -272,6 +289,9 @@ function AppContent() {
       }
       if (tabId === 'profile' || tabId === 'settings') {
         extraProps.onLogout = handleLogout;
+      }
+      if (tabId === 'settings' && currentRole === 'admin') {
+        extraProps.onNavigate = handleNavigate;
       }
 
       return (

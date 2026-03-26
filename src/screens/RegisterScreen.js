@@ -31,6 +31,8 @@ export const RegisterScreen = ({ onRegister, onBack }) => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [spiritualName, setSpiritualName] = useState('');
+  const [dob, setDob] = useState('');
+  const [address, setAddress] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -84,9 +86,10 @@ export const RegisterScreen = ({ onRegister, onBack }) => {
       <View style={[
         styles.inputContainer,
         { borderColor: focusedField === fieldKey ? colors.primary : colors.border, backgroundColor: colors.background },
+        options.multiline && { height: 64 },
       ]}>
         <TextInput
-          style={[styles.textInput, options.secureTextEntry && styles.passwordInput, { color: colors.text.primary }]}
+          style={[styles.textInput, options.secureTextEntry && styles.passwordInput, { color: colors.text.primary }, options.multiline && { textAlignVertical: 'top', paddingTop: spacing.sm }]}
           value={value}
           onChangeText={(text) => { onChangeText(text); clearError(); }}
           placeholder={placeholder}
@@ -95,6 +98,7 @@ export const RegisterScreen = ({ onRegister, onBack }) => {
           autoCapitalize={options.autoCapitalize || 'words'}
           autoCorrect={false}
           secureTextEntry={options.secureTextEntry}
+          multiline={options.multiline || false}
           onFocus={() => setFocusedField(fieldKey)}
           onBlur={() => setFocusedField(null)}
         />
@@ -156,6 +160,12 @@ export const RegisterScreen = ({ onRegister, onBack }) => {
               })}
 
               {renderField('Spiritual Name (Optional)', spiritualName, setSpiritualName, 'e.g. Bhakta John', 'spiritualName')}
+
+              {renderField('Date of Birth (Optional)', dob, setDob, 'e.g. 15 March 1995', 'dob')}
+
+              {renderField('Address (Optional)', address, setAddress, 'Home address', 'address', {
+                multiline: true,
+              })}
 
               {renderField('Password', password, setPassword, 'Min. 6 characters', 'password', {
                 secureTextEntry: !showPassword,

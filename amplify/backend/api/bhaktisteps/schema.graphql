@@ -1,0 +1,251 @@
+# ═══════════════════════════════════════════════════════════
+# Bhakti Steps — AppSync GraphQL Schema
+# ═══════════════════════════════════════════════════════════
+#
+# Auth groups: mentee, mentor, admin (mapped to Cognito groups)
+# Owner-based access for personal data (sadhana, seva, books)
+# Group-based read for mentor → mentee oversight
+# Admin has full CRUD on all models
+#
+
+# ─── Enums ─────────────────────────────────────────────────
+
+enum UserStatus { ACTIVE PENDING INACTIVE }
+enum Role { MENTEE MENTOR ADMIN }
+enum Mood { STRUGGLING STEADY INSPIRED BLISSFUL }
+enum BookStatus { NOT_STARTED READING COMPLETED }
+enum ApprovalStatus { PENDING APPROVED REJECTED }
+enum BatchStatus { ACTIVE PENDING INACTIVE }
+enum SessionStatus { SCHEDULED COMPLETED CANCELLED }
+enum AttendanceStatus { PRESENT ABSENT LATE }
+enum AuditType { USER BATCH ATTENDANCE COURSE INVITE ROLE }
+
+# ─── User & Profile ───────────────────────────────────────
+
+type User @model @auth(rules: [
+  { allow: owner },
+  { allow: groups, groups: ["mentor"], operations: [read] },
+  { allow: groups, groups: ["admin"] }
+]) {
+  id: ID!
+  email: String! @index(name: "byEmail", queryField: "userByEmail")
+  firstName: String!
+  lastName: String
+  phone: String
+  dob: String
+  address: String
+  spiritualName: String
+  initiatedName: String
+  initiationYear: Int
+  spiritualMaster: String
+  isInitiated: Boolean
+  japaTarget: Int @default(value: "16")
+  status: UserStatus! @default(value: "ACTIVE")
+  dateJoined: AWSDate!
+  lastActive: AWSDateTime
+  roles: [Role!]!
+  mentorId: ID @index(name: "byMentor", queryField: "menteesByMentor")
+  mentor: User @belongsTo(fields: ["mentorId"])
+  sadhanaEntries: [SadhanaEntry] @hasMany
+  sevaLogs: [SevaLog] @hasMany
+  bookProgress: [BookProgress] @hasMany
+  courseCompletions: [CourseCompletion] @hasMany
+}
+
+# ─── Sadhana ───────────────────────────────────────────────
+
+type SadhanaEntry @model @auth(rules: [
+  { allow: owner },
+  { allow: groups, groups: ["mentor"], operations: [read] },
+  { allow: groups, groups: ["admin"] }
+]) {
+  id: ID!
+  userId: ID! @index(name: "byUserDate", sortKeyFields: ["date"], queryField: "sadhanaByUserDate")
+  date: AWSDate!
+  japaRounds: Int!
+  score: Int!
+  mood: Mood!
+  mangalaArati: Boolean
+  japaMeditation: Boolean
+  guruPuja: Boolean
+  bhagavatamClass: Boolean
+  tulasiPuja: Boolean
+  eveningKirtana: Boolean
+  bookReadingMinutes: Int
+  owner: String
+}
+
+# ─── Seva ──────────────────────────────────────────────────
+
+type SevaLog @model @auth(rules: [
+  { allow: owner },
+  { allow: groups, groups: ["mentor"], operations: [read] },
+  { allow: groups, groups: ["admin"] }
+]) {
+  id: ID!
+  userId: ID! @index(name: "byUser", queryField: "sevaLogsByUser")
+  date: AWSDate!
+  department: String!
+  hours: Float!
+  description: String
+  owner: String
+}
+
+# ─── Books ─────────────────────────────────────────────────
+
+type Book @model @auth(rules: [
+  { allow: groups, groups: ["admin"] },
+  { allow: private, operations: [read] }
+]) {
+  id: ID!
+  title: String!
+  author: String
+  category: String
+  collection: String
+  volumeNumber: Int
+}
+
+type BookProgress @model @auth(rules: [
+  { allow: owner },
+  { allow: groups, groups: ["mentor"], operations: [read] },
+  { allow: groups, groups: ["admin"] }
+]) {
+  id: ID!
+  userId: ID! @index(name: "byUser", queryField: "bookProgressByUser")
+  bookId: ID!
+  book: Book @belongsTo(fields: ["bookId"])
+  status: BookStatus! @default(value: "NOT_STARTED")
+  owned: Boolean
+  owner: String
+}
+
+# ─── Courses ───────────────────────────────────────────────
+
+type Course @model @auth(rules: [
+  { allow: groups, groups: ["admin"] },
+  { allow: private, operations: [read] }
+]) {
+  id: ID!
+  name: String!
+  category: String
+  active: Boolean @default(value: "true")
+}
+
+type CourseCompletion @model @auth(rules: [
+  { allow: owner },
+  { allow: groups, groups: ["mentor", "admin"] }
+]) {
+  id: ID!
+  userId: ID! @index(name: "byUser", queryField: "courseCompletionsByUser")
+  courseId: ID!
+  course: Course @belongsTo(fields: ["courseId"])
+  submittedDate: AWSDate!
+  status: ApprovalStatus! @default(value: "PENDING")
+  reviewedBy: ID
+  reviewDate: AWSDate
+  feedback: String
+  owner: String
+}
+
+# ─── Batches ───────────────────────────────────────────────
+
+type Batch @model @auth(rules: [
+  { allow: groups, groups: ["mentor", "admin"] }
+]) {
+  id: ID!
+  name: String!
+  mentorId: ID! @index(name: "byMentor", queryField: "batchesByMentor")
+  schedule: String
+  location: String
+  status: BatchStatus! @default(value: "PENDING")
+  members: [BatchMember] @hasMany
+  sessions: [BatchSession] @hasMany
+}
+
+type BatchMember @model @auth(rules: [
+  { allow: groups, groups: ["mentor", "admin"] }
+]) {
+  id: ID!
+  batchId: ID! @index(name: "byBatch", queryField: "membersByBatch")
+  userId: ID! @index(name: "byUser", queryField: "batchMemberByUser")
+  joinDate: AWSDate!
+  active: Boolean! @default(value: "true")
+}
+
+type BatchSession @model @auth(rules: [
+  { allow: groups, groups: ["mentor", "admin"] }
+]) {
+  id: ID!
+  batchId: ID! @index(name: "byBatch", sortKeyFields: ["date"], queryField: "sessionsByBatchDate")
+  title: String!
+  description: String
+  module: String
+  date: AWSDate!
+  status: SessionStatus! @default(value: "SCHEDULED")
+  attendance: [SessionAttendance] @hasMany
+}
+
+type SessionAttendance @model @auth(rules: [
+  { allow: groups, groups: ["mentor", "admin"] }
+]) {
+  id: ID!
+  sessionId: ID! @index(name: "bySession", queryField: "attendanceBySession")
+  userId: ID!
+  status: AttendanceStatus!
+}
+
+# ─── Mentor Notes ──────────────────────────────────────────
+
+type MentorNote @model @auth(rules: [
+  { allow: owner },
+  { allow: groups, groups: ["admin"], operations: [read] }
+]) {
+  id: ID!
+  mentorId: ID!
+  menteeId: ID! @index(name: "byMentee", sortKeyFields: ["createdAt"], queryField: "notesByMentee")
+  text: String!
+  createdAt: AWSDateTime
+  owner: String
+}
+
+# ─── Audit Log ─────────────────────────────────────────────
+
+type AuditLog @model @auth(rules: [
+  { allow: groups, groups: ["admin"], operations: [read] }
+]) {
+  id: ID!
+  actorId: ID!
+  actorName: String!
+  action: String!
+  target: String!
+  type: AuditType!
+  date: AWSDateTime! @index(name: "byDate", queryField: "auditLogsByDate")
+}
+
+# ─── Reference Data (admin-managed lists) ──────────────────
+
+type ReferenceItem @model @auth(rules: [
+  { allow: groups, groups: ["admin"] },
+  { allow: private, operations: [read] }
+]) {
+  id: ID!
+  category: String! @index(name: "byCategory", queryField: "referenceItemsByCategory")
+  name: String!
+  active: Boolean! @default(value: "true")
+  sortOrder: Int
+}
+
+# ─── Sadhana Scoring Configuration ─────────────────────────
+
+type ScoringConfig @model @auth(rules: [
+  { allow: groups, groups: ["admin"] },
+  { allow: private, operations: [read] }
+]) {
+  id: ID!
+  roundsWeight: Int!
+  morningProgrammeWeight: Int!
+  bookReadingWeight: Int!
+  moodWeight: Int!
+  sevaWeight: Int!
+  bookReadingTargetMinutes: Int!
+}

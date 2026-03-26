@@ -22,6 +22,7 @@ import Svg, { Line, Polyline, Polygon, Defs, LinearGradient as SvgLinearGradient
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { BottomSheet } from '../components/BottomSheet';
+import { StepperControl } from '../components/StepperControl';
 import { useToast } from '../components/Toast';
 import { colors, spacing, typography, radius } from '../theme';
 import { useTheme } from '../ThemeContext';
@@ -919,9 +920,31 @@ export const MenteeDetailScreen = ({ onBack, onRemoveUser, headerExtra }) => {
           </View>
         )}
 
-        {/* I5: Attendance tab — includes session title */}
+        {/* I5: Attendance tab — includes session title + streak stats */}
         {activeTab === 'attendance' && (
           <View>
+            {/* Attendance streak + rate chips */}
+            <View style={styles.statsRow}>
+              <View style={[styles.statChip, { backgroundColor: `${colors.primary}10` }]}>
+                <View style={styles.statValue}>
+                  <Fire size={16} color={colors.status.error} weight="fill" />
+                  <Text style={[styles.statNumber, { color: colors.text.primary }]}>
+                    {(() => { let s = 0; for (const e of MockData.menteeDetailAttendance) { if (e.status === 'present') s++; else break; } return s; })()}
+                  </Text>
+                </View>
+                <Text style={[styles.statLabel, { color: colors.text.secondary }]}>Streak</Text>
+              </View>
+              <View style={[styles.statChip, { backgroundColor: `${colors.primary}10` }]}>
+                <View style={styles.statValue}>
+                  <Star size={16} color={colors.text.primary} weight="fill" />
+                  <Text style={[styles.statNumber, { color: colors.text.primary }]}>
+                    {Math.round(MockData.menteeDetailAttendance.filter(e => e.status === 'present').length / MockData.menteeDetailAttendance.length * 100)}%
+                  </Text>
+                </View>
+                <Text style={[styles.statLabel, { color: colors.text.secondary }]}>Rate</Text>
+              </View>
+            </View>
+
             {MockData.menteeDetailAttendance.map((entry, index) => (
               <TouchableOpacity key={index} style={[styles.attendanceRow, { borderBottomColor: colors.border }]} onPress={() => openSessionFromAttendance(entry)}>
                 <View>
@@ -1099,48 +1122,171 @@ export const ApprovalsScreen = () => {
 };
 
 // ═══════════════════════════════════════════════════════════
+// Mentor Sadhana Screen (§5.1)
+// ═══════════════════════════════════════════════════════════
+
+import { TodayScreen, ProgressScreen, SevaBooksScreen } from './MenteeScreens';
+
+export const MentorSadhanaScreen = () => {
+  const { colors } = useTheme();
+  const [activeView, setActiveView] = useState('today');
+  const mentorData = MockData.mentorSadhana;
+  const sadhanaData = { ...MockData.sadhana, japaTarget: mentorData.japaTarget, japaDefault: mentorData.japaDefault };
+
+  const views = [
+    { id: 'today', label: 'Today' },
+    { id: 'progress', label: 'Progress' },
+    { id: 'seva', label: 'Seva & Books' },
+  ];
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* Sub-tab strip */}
+      <View style={[styles.subTabStrip, { borderBottomColor: colors.border }]}>
+        {views.map(({ id, label }) => (
+          <TouchableOpacity
+            key={id}
+            style={[styles.subTab, activeView === id && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+            onPress={() => setActiveView(id)}
+          >
+            <Text style={[styles.subTabText, { color: activeView === id ? colors.primary : colors.text.secondary }, activeView === id && { fontWeight: '600' }]} numberOfLines={1}>
+              {label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Content */}
+      <View style={{ flex: 1 }}>
+        {activeView === 'today' && <TodayScreen sadhanaData={sadhanaData} sevaLogs={mentorData.sevaLogs} />}
+        {activeView === 'progress' && <ProgressScreen progressStats={mentorData.progressStats} submissionHistory={mentorData.submissionHistory} />}
+        {activeView === 'seva' && <SevaBooksScreen sevaLogs={mentorData.sevaLogs} courses={mentorData.courses} />}
+      </View>
+    </View>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════
 // Mentor Profile Screen
 // ═══════════════════════════════════════════════════════════
 
 export const MentorProfileScreen = ({ onLogout }) => {
   const { isDark, colors, toggleTheme } = useTheme();
+  const showToast = useToast();
+  const profile = MockData.mentorProfile;
+  const profileSheetRef = useRef(null);
+  const [editName, setEditName] = useState(profile.name);
+  const [editEmail, setEditEmail] = useState(profile.email);
+  const [editPhone, setEditPhone] = useState(profile.phone);
+  const [editJapaTarget, setEditJapaTarget] = useState(profile.japaTarget);
+  const [editInitiatedName, setEditInitiatedName] = useState(profile.initiatedName || '');
+  const [editInitiationYear, setEditInitiationYear] = useState(String(profile.initiationYear || ''));
+  const [editSpiritualMaster, setEditSpiritualMaster] = useState(profile.spiritualMaster || '');
+  const [editDob, setEditDob] = useState(profile.dob || '');
+  const [editAddress, setEditAddress] = useState(profile.address || '');
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
-      <View style={styles.profileHeader}>
-        <View style={[styles.avatar, { backgroundColor: colors.accent.peach }]}>
-          <Text style={styles.avatarText}>S</Text>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
+        <View style={styles.profileHeader}>
+          <View style={[styles.avatar, { backgroundColor: colors.accent.peach }]}>
+            <Text style={styles.avatarText}>S</Text>
+          </View>
+          <Text style={[styles.profileName, { color: colors.text.primary }]}>{profile.name}</Text>
+          <Text style={[styles.profileEmail, { color: colors.text.secondary }]}>{profile.email}</Text>
         </View>
-        <Text style={[styles.profileName, { color: colors.text.primary }]}>Syamasundara Das</Text>
-        <Text style={[styles.profileEmail, { color: colors.text.secondary }]}>syama@example.com</Text>
-      </View>
 
-      <View style={styles.profileDetails}>
-        <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Dark Mode</Text>
-          <ToggleSwitch value={isDark} onValueChange={toggleTheme} />
+        <View style={styles.profileDetails}>
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Dark Mode</Text>
+            <ToggleSwitch value={isDark} onValueChange={toggleTheme} />
+          </View>
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Email</Text>
+            <TouchableOpacity onPress={() => Linking.openURL(`mailto:${profile.email}`)}>
+              <Text style={[styles.detailValue, { color: colors.primary }]}>{profile.email}</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Phone</Text>
+            <TouchableOpacity onPress={() => Linking.openURL(`tel:${profile.phone}`)}>
+              <Text style={[styles.detailValue, { color: colors.primary }]}>{profile.phone}</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Date Joined</Text>
+            <Text style={[styles.detailValue, { color: colors.text.primary }]}>{profile.dateJoined}</Text>
+          </View>
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Initiated</Text>
+            <Text style={[styles.detailValue, { color: colors.text.primary }]}>{profile.initiatedName || 'Not yet initiated'}</Text>
+          </View>
+          {profile.initiationYear && (
+            <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Initiation Year</Text>
+              <Text style={[styles.detailValue, { color: colors.text.primary }]}>{profile.initiationYear}</Text>
+            </View>
+          )}
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Spiritual Master</Text>
+            <Text style={[styles.detailValue, { color: colors.text.primary }]}>{profile.spiritualMaster || 'Not applicable'}</Text>
+          </View>
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Date of Birth</Text>
+            <Text style={[styles.detailValue, { color: colors.text.primary }]}>{profile.dob || 'Not set'}</Text>
+          </View>
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Address</Text>
+            <Text style={[styles.detailValue, { color: colors.text.primary }]} numberOfLines={2}>{profile.address || 'Not set'}</Text>
+          </View>
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Japa Target</Text>
+            <Text style={[styles.detailValue, { color: colors.text.primary }]}>{profile.japaTarget} rounds</Text>
+          </View>
         </View>
-        <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Phone</Text>
-          <Text style={[styles.detailValue, { color: colors.text.primary }]}>+44 7700 900789</Text>
-        </View>
-        <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Initiated</Text>
-          <Text style={[styles.detailValue, { color: colors.text.primary }]}>Yes — 2018</Text>
-        </View>
-        <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Spiritual Master</Text>
-          <Text style={[styles.detailValue, { color: colors.text.primary }]}>HH Sivarama Swami</Text>
-        </View>
-      </View>
 
-      <Button variant="secondary" style={styles.profileButton}>
-        Edit Profile
-      </Button>
-      <Button variant="destructive" onPress={onLogout}>
-        Log Out
-      </Button>
-    </ScrollView>
+        <Button variant="secondary" style={styles.profileButton} onPress={() => profileSheetRef.current?.present()}>
+          Edit Profile
+        </Button>
+        <Button variant="destructive" onPress={onLogout}>
+          Log Out
+        </Button>
+      </ScrollView>
+
+      <BottomSheet ref={profileSheetRef} snapPoints={['90%']} title="Edit Profile">
+        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Name</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editName} onChangeText={setEditName} placeholderTextColor={colors.text.secondary} />
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Email</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editEmail} onChangeText={setEditEmail} placeholderTextColor={colors.text.secondary} keyboardType="email-address" />
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Phone</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editPhone} onChangeText={setEditPhone} placeholderTextColor={colors.text.secondary} keyboardType="phone-pad" />
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Japa Target</Text>
+          <View style={{ alignItems: 'center', marginVertical: spacing.sm }}>
+            <StepperControl value={editJapaTarget} onValueChange={setEditJapaTarget} min={1} max={192} />
+          </View>
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Initiated Name</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editInitiatedName} onChangeText={setEditInitiatedName} placeholder="Not yet initiated" placeholderTextColor={colors.text.secondary} />
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Initiation Year</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editInitiationYear} onChangeText={setEditInitiationYear} placeholder="e.g. 2018" placeholderTextColor={colors.text.secondary} keyboardType="number-pad" />
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Spiritual Master</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editSpiritualMaster} onChangeText={setEditSpiritualMaster} placeholder="Not applicable" placeholderTextColor={colors.text.secondary} />
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Date of Birth</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editDob} onChangeText={setEditDob} placeholder="e.g. 10 January 1990" placeholderTextColor={colors.text.secondary} />
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Address</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary, height: 64, textAlignVertical: 'top' }]} value={editAddress} onChangeText={setEditAddress} placeholder="Home address" placeholderTextColor={colors.text.secondary} multiline />
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Date Joined</Text>
+          <Text style={[styles.sheetDateText, { color: colors.text.primary }]}>{profile.dateJoined}</Text>
+          <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={() => {
+            showToast?.('Profile saved!', 'success');
+            profileSheetRef.current?.dismiss();
+          }}>
+            Save Changes
+          </Button>
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </BottomSheet>
+    </View>
   );
 };
 

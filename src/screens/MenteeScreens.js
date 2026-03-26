@@ -20,6 +20,7 @@ import {
   UIManager,
   Image,
   KeyboardAvoidingView,
+  Linking,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Card } from '../components/Card';
@@ -33,6 +34,8 @@ import { colors, spacing, typography, radius } from '../theme';
 import { useTheme } from '../ThemeContext';
 import { useToast } from '../components/Toast';
 import { MockData } from '../mockData';
+import { usePaginatedList } from '../hooks/usePaginatedList';
+import { PaginatedScrollView } from '../components/PaginatedScrollView';
 import Svg, { Polyline, Polygon, Line, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import {
   Fire,
@@ -53,6 +56,9 @@ import {
   BookOpenText,
   Leaf,
   Waveform,
+  WhatsappLogo,
+  Phone,
+  EnvelopeSimple,
 } from 'phosphor-react-native';
 
 // Enable LayoutAnimation on Android
@@ -70,17 +76,35 @@ const PROGRAMME_ICONS = {
 };
 
 // ═══════════════════════════════════════════════════════════
+// Sadhana Scoring Function
+// ═══════════════════════════════════════════════════════════
+
+const calculateScore = (config, { japaRounds, japaTarget, morningProgramme, bookEntries, mood, hasSevaToday }) => {
+  const roundsScore = Math.min(japaRounds / (japaTarget || 16), 1) * config.roundsWeight;
+  const mpDone = morningProgramme.filter(Boolean).length;
+  const mpScore = (mpDone / (morningProgramme.length || 1)) * config.morningProgrammeWeight;
+  const totalBookMin = bookEntries.reduce((sum, e) => sum + (e.duration || 0), 0);
+  const bookScore = Math.min(totalBookMin / (config.bookReadingTargetMinutes || 30), 1) * config.bookReadingWeight;
+  const moodMap = { struggling: 0.25, steady: 0.5, inspired: 0.75, blissful: 1.0 };
+  const moodScore = (moodMap[mood] || 0.5) * config.moodWeight;
+  const sevaScore = hasSevaToday ? config.sevaWeight : 0;
+  return Math.round(roundsScore + mpScore + bookScore + moodScore + sevaScore);
+};
+
+// ═══════════════════════════════════════════════════════════
 // Today Screen (§6.3)
 // ═══════════════════════════════════════════════════════════
 
-export const TodayScreen = () => {
+export const TodayScreen = ({ sadhanaData, sevaLogs: sevaLogsProp } = {}) => {
+  const sadhana = sadhanaData || MockData.sadhana;
+  const sevaLogsData = sevaLogsProp || MockData.sevaLogs;
   const { colors } = useTheme();
   const showToast = useToast();
-  const [japaRounds, setJapaRounds] = useState(MockData.sadhana.japaDefault);
+  const [japaRounds, setJapaRounds] = useState(sadhana.japaDefault);
   const [morningProgramme, setMorningProgramme] = useState(
-    MockData.sadhana.morningProgramme.map(item => item.defaultOn)
+    sadhana.morningProgramme.map(item => item.defaultOn)
   );
-  const [mood, setMood] = useState(MockData.sadhana.defaultMood.toLowerCase());
+  const [mood, setMood] = useState(sadhana.defaultMood.toLowerCase());
   const [notes, setNotes] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [bookEntries, setBookEntries] = useState([{ book: MockData.books[0].title, duration: 30 }]);
@@ -95,9 +119,10 @@ export const TodayScreen = () => {
   const formOpacity = useRef(new Animated.Value(1)).current;
   const summaryOpacity = useRef(new Animated.Value(0)).current;
   const summaryTranslateY = useRef(new Animated.Value(16)).current;
+  const [computedScore, setComputedScore] = useState(0);
 
   const handleSameAsYesterday = () => {
-    setJapaRounds(MockData.sadhana.japaDefault);
+    setJapaRounds(sadhana.japaDefault);
     setMorningProgramme([false, true, true, false, false, false]);
     setMood('steady');
     setBookEntries([{ book: MockData.books[0].title, duration: 30 }]);
@@ -118,6 +143,15 @@ export const TodayScreen = () => {
   };
 
   const handleSubmit = () => {
+    const score = calculateScore(MockData.sadhanaScoring, {
+      japaRounds,
+      japaTarget: sadhana.japaTarget,
+      morningProgramme,
+      bookEntries,
+      mood,
+      hasSevaToday: sevaLogsData.some(l => l.date === 'today'),
+    });
+    setComputedScore(score);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     showToast?.('Sadhana submitted successfully', 'success');
     Animated.timing(formOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
@@ -151,7 +185,7 @@ export const TodayScreen = () => {
   };
 
   // B4: Fire icon color — orange when target met
-  const japaTargetMet = japaRounds >= MockData.sadhana.japaTarget;
+  const japaTargetMet = japaRounds >= sadhana.japaTarget;
 
   if (submitted) {
     return (
@@ -163,7 +197,7 @@ export const TodayScreen = () => {
                 source={require('../../assets/lotus-watercolor.png')}
                 style={styles.lotusOverlay}
               />
-              <Text style={[styles.summaryScore, { color: colors.primary }]}>84</Text>
+              <Text style={[styles.summaryScore, { color: colors.primary }]}>{computedScore}</Text>
               <Text style={[styles.summaryLabel, { color: colors.text.secondary }]}>SADHANA SCORE</Text>
 
               <View style={styles.miniDots}>
@@ -238,17 +272,17 @@ export const TodayScreen = () => {
               min={0}
               max={192}
             />
-            <Text style={[styles.targetText, { color: colors.text.secondary }]}>Target: {MockData.sadhana.japaTarget} rounds</Text>
+            <Text style={[styles.targetText, { color: colors.text.secondary }]}>Target: {sadhana.japaTarget} rounds</Text>
           </Card>
 
           {/* Morning Programme */}
           <Card variant="form">
             <Text style={[styles.cardTitle, { color: colors.text.primary }]}>Morning Programme</Text>
-            {MockData.sadhana.morningProgramme.map((item, index) => (
+            {sadhana.morningProgramme.map((item, index) => (
               <View key={item.id} style={[
                 styles.toggleRow,
                 { borderBottomColor: colors.border },
-                index === MockData.sadhana.morningProgramme.length - 1 && { borderBottomWidth: 0 }
+                index === sadhana.morningProgramme.length - 1 && { borderBottomWidth: 0 }
               ]}>
                 <View style={styles.toggleIcon}>
                   {PROGRAMME_ICONS[item.icon] && React.createElement(PROGRAMME_ICONS[item.icon], { size: 24, color: colors.text.primary })}
@@ -432,9 +466,12 @@ export const TodayScreen = () => {
 // Progress Screen (§6.4)
 // ═══════════════════════════════════════════════════════════
 
-export const ProgressScreen = () => {
+export const ProgressScreen = ({ progressStats: progressStatsProp, submissionHistory: submissionHistoryProp } = {}) => {
+  const progressStats = progressStatsProp || MockData.progressStats;
+  const submissionHistory = submissionHistoryProp || MockData.submissionHistory;
   const { colors } = useTheme();
   const [timescale, setTimescale] = useState('30');
+  const { data: paginatedHistory, hasMore: historyHasMore, loadMore: loadMoreHistory } = usePaginatedList(submissionHistory, { initialCount: 30, pageSize: 10 });
   const [activeTooltip, setActiveTooltip] = useState(null);
   const chartScale = useRef(new Animated.Value(1)).current;
   const chartOpacity = useRef(new Animated.Value(1)).current;
@@ -466,7 +503,7 @@ export const ProgressScreen = () => {
   };
 
   // Filter data by timescale
-  const timeFilteredData = MockData.submissionHistory.slice(0, parseInt(timescale));
+  const timeFilteredData = submissionHistory.slice(0, parseInt(timescale));
   const chartData = timeFilteredData.slice().reverse();
 
   // Dynamic y-axis
@@ -479,9 +516,9 @@ export const ProgressScreen = () => {
   );
 
   const statChips = [
-    { key: 'streak', Icon: Fire, iconColor: colors.primary, value: MockData.progressStats.streak, label: 'Streak' },
-    { key: 'avgScore', Icon: Star, iconColor: colors.text.primary, value: MockData.progressStats.avgScore, label: 'Avg Score' },
-    { key: 'sevaHours', Icon: Clock, iconColor: colors.text.primary, value: MockData.progressStats.sevaHours, label: 'Seva Hrs' },
+    { key: 'streak', Icon: Fire, iconColor: colors.primary, value: progressStats.streak, label: 'Streak' },
+    { key: 'avgScore', Icon: Star, iconColor: colors.text.primary, value: progressStats.avgScore, label: 'Avg Score' },
+    { key: 'sevaHours', Icon: Clock, iconColor: colors.text.primary, value: progressStats.sevaHours, label: 'Seva Hrs' },
   ];
 
   // C5: Smooth tooltip animation
@@ -594,13 +631,13 @@ export const ProgressScreen = () => {
             {/* C3: Full "Progress" header */}
             <Text style={[styles.historyHeaderText, { width: 80, textAlign: 'center', color: colors.text.secondary }]}>Progress</Text>
           </View>
-          {/* Scrollable rows */}
-          <ScrollView nestedScrollEnabled style={{ flex: 1 }}>
-            {timeFilteredData.map((entry, index) => (
+          {/* Scrollable rows with pagination */}
+          <PaginatedScrollView nestedScrollEnabled style={{ flex: 1 }} hasMore={historyHasMore} onLoadMore={loadMoreHistory}>
+            {paginatedHistory.slice(0, parseInt(timescale)).map((entry, index) => (
               <View key={index} style={[
                 styles.historyRow,
                 { borderBottomColor: colors.border },
-                index === timeFilteredData.length - 1 && { borderBottomWidth: 0 }
+                index === paginatedHistory.slice(0, parseInt(timescale)).length - 1 && { borderBottomWidth: 0 }
               ]}>
                 <View style={styles.historyDate}>
                   <View style={[styles.moodDot, { backgroundColor: colors.mood[entry.mood] }]} />
@@ -616,7 +653,7 @@ export const ProgressScreen = () => {
                 </View>
               </View>
             ))}
-          </ScrollView>
+          </PaginatedScrollView>
         </View>
       </View>
     </View>
@@ -627,14 +664,18 @@ export const ProgressScreen = () => {
 // SevaBooks Screen (§6.5)
 // ═══════════════════════════════════════════════════════════
 
-export const SevaBooksScreen = () => {
+export const SevaBooksScreen = ({ sevaLogs: sevaLogsProp, books: booksProp, bookCollections: bookCollectionsProp, courses: coursesProp } = {}) => {
+  const sevaLogsForDisplay = sevaLogsProp || MockData.sevaLogs;
+  const booksSource = booksProp || MockData.books;
+  const collectionsSource = bookCollectionsProp || MockData.bookCollections;
+  const coursesSource = coursesProp || MockData.courses;
   const { colors } = useTheme();
   const showToast = useToast();
   const [activeTab, setActiveTab] = useState('seva');
   const [bookSearch, setBookSearch] = useState('');
-  const [books, setBooks] = useState(MockData.books.map(b => ({ ...b })));
+  const [books, setBooks] = useState(booksSource.map(b => ({ ...b })));
   const [collections, setCollections] = useState(
-    MockData.bookCollections.map(c => ({ ...c, volumes: c.volumes.map(v => ({ ...v })) }))
+    collectionsSource.map(c => ({ ...c, volumes: c.volumes.map(v => ({ ...v })) }))
   );
   const [expandedCollections, setExpandedCollections] = useState({});
   const [sevaDept, setSevaDept] = useState('');
@@ -642,8 +683,10 @@ export const SevaBooksScreen = () => {
   const [sevaDuration, setSevaDuration] = useState(1);
   const [sevaDate, setSevaDate] = useState(new Date());
   const [courseName, setCourseName] = useState('');
+  const [courseIsOther, setCourseIsOther] = useState(false);
   const [courseNotes, setCourseNotes] = useState('');
   const [courseDate, setCourseDate] = useState(new Date());
+  const courseOptions = (MockData.adminSettingsLists?.['Courses'] || []).filter(c => c.active).map(c => c.name);
   const bottomSheetRef = useRef(null);
   const courseSheetRef = useRef(null);
   // D3: Fade animation for sub-tab switching
@@ -746,7 +789,7 @@ export const SevaBooksScreen = () => {
               <Button variant="secondary" onPress={openSevaLog} style={styles.actionButton}>
                 + Log Seva
               </Button>
-              {MockData.sevaLogs.map((log, index) => (
+              {sevaLogsForDisplay.map((log, index) => (
                 <Card key={index} variant="form" style={styles.sevaCard}>
                   <View style={styles.sevaHeader}>
                     <Text style={[styles.sevaDate, { color: colors.text.primary }]}>{log.date}</Text>
@@ -885,7 +928,7 @@ export const SevaBooksScreen = () => {
               <Button variant="secondary" style={styles.actionButton} onPress={() => courseSheetRef.current?.present()}>
                 + Submit Course
               </Button>
-              {MockData.courses.map((course, index) => (
+              {coursesSource.map((course, index) => (
                 <View key={index} style={[styles.courseRow, { borderBottomColor: colors.border }]}>
                   <View>
                     <Text style={[styles.courseName, { color: colors.text.primary }]}>{course.name}</Text>
@@ -907,14 +950,14 @@ export const SevaBooksScreen = () => {
         <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Department</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deptScroll}>
-            {MockData.departments.map((dept) => (
+            {(MockData.adminSettingsLists['Service Departments'] || []).filter(d => d.active).map((dept) => (
               <TouchableOpacity
-                key={dept}
-                style={[styles.deptChip, { backgroundColor: colors.surface, borderColor: colors.border }, sevaDept === dept && { backgroundColor: colors.accent.peach, borderColor: colors.primary }]}
-                onPress={() => setSevaDept(dept)}
+                key={dept.name}
+                style={[styles.deptChip, { backgroundColor: colors.surface, borderColor: colors.border }, sevaDept === dept.name && { backgroundColor: colors.accent.peach, borderColor: colors.primary }]}
+                onPress={() => setSevaDept(dept.name)}
               >
-                <Text style={[styles.deptChipText, { color: colors.text.secondary }, sevaDept === dept && { color: colors.primary, fontWeight: '600' }]}>
-                  {dept}
+                <Text style={[styles.deptChipText, { color: colors.text.secondary }, sevaDept === dept.name && { color: colors.primary, fontWeight: '600' }]}>
+                  {dept.name}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -944,15 +987,41 @@ export const SevaBooksScreen = () => {
         </ScrollView>
       </BottomSheet>
 
-      <BottomSheet ref={courseSheetRef} snapPoints={['70%']} title="Submit Course">
-        <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Course Name</Text>
-        <TextInput
-          style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]}
-          placeholder="e.g. Bhakti Shastri"
-          value={courseName}
-          onChangeText={setCourseName}
-          placeholderTextColor={colors.text.secondary}
-        />
+      <BottomSheet ref={courseSheetRef} snapPoints={['80%']} title="Submit Course">
+        <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Course</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deptScroll}>
+          {courseOptions.map((opt) => (
+            <TouchableOpacity
+              key={opt}
+              style={[styles.deptChip, { backgroundColor: colors.surface, borderColor: colors.border }, courseName === opt && !courseIsOther && { backgroundColor: colors.accent.peach, borderColor: colors.primary }]}
+              onPress={() => { setCourseName(opt); setCourseIsOther(false); }}
+            >
+              <Text style={[styles.deptChipText, { color: colors.text.secondary }, courseName === opt && !courseIsOther && { color: colors.primary, fontWeight: '600' }]}>
+                {opt}
+              </Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity
+            style={[styles.deptChip, { backgroundColor: colors.surface, borderColor: colors.border }, courseIsOther && { backgroundColor: colors.accent.peach, borderColor: colors.primary }]}
+            onPress={() => { setCourseIsOther(true); setCourseName(''); }}
+          >
+            <Text style={[styles.deptChipText, { color: colors.text.secondary }, courseIsOther && { color: colors.primary, fontWeight: '600' }]}>
+              Other
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+        {courseIsOther && (
+          <>
+            <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Course Name</Text>
+            <TextInput
+              style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]}
+              placeholder="Enter course name..."
+              value={courseName}
+              onChangeText={setCourseName}
+              placeholderTextColor={colors.text.secondary}
+            />
+          </>
+        )}
         {/* D2: Date selector for course */}
         <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Completion Date</Text>
         <DateSelector value={courseDate} onChange={setCourseDate} />
@@ -991,6 +1060,11 @@ export const ProfileScreen = ({ onLogout }) => {
   const [editJapaTarget, setEditJapaTarget] = useState(profile.japaTarget);
   const [editInitiatedName, setEditInitiatedName] = useState(profile.initiatedName || '');
   const [editSpiritualMaster, setEditSpiritualMaster] = useState(profile.spiritualMaster || '');
+  const [editDob, setEditDob] = useState(profile.dob || '');
+  const [editAddress, setEditAddress] = useState(profile.address || '');
+  const [editInitiationYear, setEditInitiationYear] = useState(profile.initiationYear || '');
+  const [smPickerOpen, setSmPickerOpen] = useState(false);
+  const spiritualMasters = (MockData.adminSettingsLists?.['Spiritual Masters'] || []).filter(sm => sm.active).map(sm => sm.name);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -1030,7 +1104,52 @@ export const ProfileScreen = ({ onLogout }) => {
             <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Japa Target</Text>
             <Text style={[styles.detailValue, { color: colors.text.primary }]}>{profile.japaTarget} rounds</Text>
           </View>
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Date of Birth</Text>
+            <Text style={[styles.detailValue, { color: colors.text.primary }]}>{profile.dob || 'Not set'}</Text>
+          </View>
+          <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Address</Text>
+            <Text style={[styles.detailValue, { color: colors.text.primary }]} numberOfLines={2}>{profile.address || 'Not set'}</Text>
+          </View>
+          {profile.initiationYear && (
+            <View style={[styles.detailRow, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.detailLabel, { color: colors.text.secondary }]}>Initiation Year</Text>
+              <Text style={[styles.detailValue, { color: colors.text.primary }]}>{profile.initiationYear}</Text>
+            </View>
+          )}
         </View>
+
+        {/* My Mentor contact card */}
+        {profile.mentor && (
+          <Card variant="dashboard" style={{ marginBottom: spacing.md }}>
+            <Text style={[styles.sectionTitle, { color: colors.text.primary, marginBottom: spacing.sm }]}>My Mentor</Text>
+            <Text style={[styles.detailValue, { color: colors.text.primary, marginBottom: spacing.sm }]}>{profile.mentor.name}</Text>
+            <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+              <TouchableOpacity
+                style={[styles.contactChip, { backgroundColor: `${colors.status.success}15` }]}
+                onPress={() => Linking.openURL(`https://wa.me/${profile.mentor.phone.replace(/[^0-9+]/g, '')}`)}
+              >
+                <WhatsappLogo size={16} color={colors.status.success} weight="fill" />
+                <Text style={[styles.contactChipText, { color: colors.status.success }]}>WhatsApp</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.contactChip, { backgroundColor: `${colors.primary}15` }]}
+                onPress={() => Linking.openURL(`tel:${profile.mentor.phone}`)}
+              >
+                <Phone size={16} color={colors.primary} weight="fill" />
+                <Text style={[styles.contactChipText, { color: colors.primary }]}>Phone</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.contactChip, { backgroundColor: `${colors.primary}15` }]}
+                onPress={() => Linking.openURL(`mailto:${profile.mentor.email}`)}
+              >
+                <EnvelopeSimple size={16} color={colors.primary} weight="fill" />
+                <Text style={[styles.contactChipText, { color: colors.primary }]}>Email</Text>
+              </TouchableOpacity>
+            </View>
+          </Card>
+        )}
 
         <Button variant="secondary" style={styles.profileButton} onPress={() => profileSheetRef.current?.present()}>
           Edit Profile
@@ -1055,8 +1174,43 @@ export const ProfileScreen = ({ onLogout }) => {
           </View>
           <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Initiated Name</Text>
           <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editInitiatedName} onChangeText={setEditInitiatedName} placeholder="Not yet initiated" placeholderTextColor={colors.text.secondary} />
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Initiation Year</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={String(editInitiationYear || '')} onChangeText={setEditInitiationYear} placeholder="e.g. 2020" placeholderTextColor={colors.text.secondary} keyboardType="number-pad" />
           <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Spiritual Master</Text>
-          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editSpiritualMaster} onChangeText={setEditSpiritualMaster} placeholder="Not applicable" placeholderTextColor={colors.text.secondary} />
+          <TouchableOpacity
+            style={[styles.sheetInput, { borderColor: colors.border, justifyContent: 'center' }]}
+            onPress={() => setSmPickerOpen(v => !v)}
+          >
+            <Text style={{ ...typography.body, color: editSpiritualMaster ? colors.text.primary : colors.text.secondary }}>
+              {editSpiritualMaster || 'Select spiritual master...'}
+            </Text>
+          </TouchableOpacity>
+          {smPickerOpen && (
+            <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, marginBottom: spacing.md, overflow: 'hidden' }}>
+              {spiritualMasters.map((sm, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={{ padding: spacing.md, borderBottomWidth: idx < spiritualMasters.length - 1 ? 1 : 0, borderBottomColor: colors.border, backgroundColor: editSpiritualMaster === sm ? colors.accent.peach : 'transparent' }}
+                  onPress={() => { setEditSpiritualMaster(sm); setSmPickerOpen(false); }}
+                >
+                  <Text style={{ ...typography.body, color: colors.text.primary }}>{sm}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={{ padding: spacing.md, backgroundColor: editSpiritualMaster && !spiritualMasters.includes(editSpiritualMaster) ? colors.accent.peach : 'transparent' }}
+                onPress={() => { setEditSpiritualMaster(''); setSmPickerOpen(false); }}
+              >
+                <Text style={{ ...typography.body, color: colors.text.secondary }}>Other (type below)</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {smPickerOpen === false && editSpiritualMaster && !spiritualMasters.includes(editSpiritualMaster) && (
+            <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editSpiritualMaster} onChangeText={setEditSpiritualMaster} placeholder="Enter spiritual master name" placeholderTextColor={colors.text.secondary} />
+          )}
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Date of Birth</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary }]} value={editDob} onChangeText={setEditDob} placeholder="e.g. 15 March 1995" placeholderTextColor={colors.text.secondary} />
+          <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Address</Text>
+          <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary, height: 64, textAlignVertical: 'top' }]} value={editAddress} onChangeText={setEditAddress} placeholder="Home address" placeholderTextColor={colors.text.secondary} multiline />
           <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Date Joined</Text>
           <Text style={[styles.sheetDateText, { color: colors.text.primary }]}>{profile.dateJoined}</Text>
           <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={() => {
@@ -1664,5 +1818,17 @@ const styles = StyleSheet.create({
   },
   deptChipText: {
     ...typography.caption,
+  },
+  contactChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.full,
+    gap: spacing.xs,
+  },
+  contactChipText: {
+    ...typography.caption,
+    fontWeight: '600',
   },
 });
