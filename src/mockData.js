@@ -57,6 +57,11 @@ export const MockData = {
     moodWeight: 10,
     sevaWeight: 5,
     bookReadingTargetMinutes: 30,
+    japaTarget: 16,
+    moodMultiplierStruggling: 0.25,
+    moodMultiplierSteady: 0.5,
+    moodMultiplierInspired: 0.75,
+    moodMultiplierBlissful: 1.0,
   },
 
   /* ═══════════════════════════════════════════════════════ */

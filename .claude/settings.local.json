@@ -10,7 +10,9 @@
       "Bash(find /c/Users/zyanr/bhakti-steps -type f -name *.docx -o -name *spec* -o -name README*)",
       "Bash(find /c/Users/zyanr/bhakti-steps -type f \\\\\\(-name *.graphql -o -name *schema* -o -name *api* -o -name amplify* \\\\\\))",
       "Bash(npm uninstall:*)",
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "Bash(grep -E \"\\\\.js$\")",
+      "Bash(wc -l /c/Users/zyanr/bhakti-steps/src/screens/*.js)"
     ]
   }
 }

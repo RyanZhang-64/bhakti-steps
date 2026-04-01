@@ -164,6 +164,11 @@ const defaultScoringConfig = [
   { key: 'hearing_weight', value: 10, description: 'Weight for hearing/lecture minutes' },
   { key: 'seva_weight', value: 5, description: 'Weight for seva hours' },
   { key: 'book_reading_target_minutes', value: 30, description: 'Daily reading target in minutes' },
+  { key: 'japa_target', value: 16, description: 'Default daily japa rounds target' },
+  { key: 'mood_multiplier_struggling', value: 0.25, description: 'Score multiplier for Struggling mood' },
+  { key: 'mood_multiplier_steady', value: 0.5, description: 'Score multiplier for Steady mood' },
+  { key: 'mood_multiplier_inspired', value: 0.75, description: 'Score multiplier for Inspired mood' },
+  { key: 'mood_multiplier_blissful', value: 1.0, description: 'Score multiplier for Blissful mood' },
 ];
 
 // ─── Main ────────────────────────────────────────────────
@@ -272,7 +277,14 @@ async function seed() {
         description: 'Weekly Wednesday evening session',
         mentor_id: mentorId,
         start_date: new Date().toISOString().split('T')[0],
+        schedule: 'Wednesdays, 19:00',
+        location: 'Temple Room',
         is_active: true,
+        modules: [
+          { title: 'Introduction to Bhakti', status: 'completed' },
+          { title: 'Japa Workshop', status: 'active' },
+          { title: 'Bhagavad-gita Study', status: 'upcoming' },
+        ],
       })
       .select('id')
       .single();
@@ -282,8 +294,33 @@ async function seed() {
     } else {
       const members = menteeIds.map(id => ({ batch_id: batch.id, user_id: id }));
       await supabase.from('batch_members').insert(members);
+      console.log(`  [Batch] Created "Wednesday Evening Batch" with ${menteeIds.length} members`);
 
-      console.log(`  [Batch] Created "Wednesday Evening Batch" with ${menteeIds.length} members\n`);
+      // Sample sessions
+      const sessionDefs = [
+        { title: 'Welcome Session',       description: 'Introductions and overview of the Bhakti Steps programme.', weeksAgo: 5 },
+        { title: 'Intro to Bhakti Pt 1',  description: 'Introduction to bhakti yoga and the Hare Krishna tradition.', weeksAgo: 4 },
+        { title: 'Intro to Bhakti Pt 2',  description: 'Exploring the Bhagavad-gita and its relevance to daily life.', weeksAgo: 3 },
+        { title: 'Japa Workshop Pt 1',    description: 'Introduction to japa meditation and the Hare Krishna maha-mantra.', weeksAgo: 2 },
+        { title: 'Japa Workshop Pt 2',    description: 'Proper pronunciation and the importance of attentive chanting.', weeksAgo: 1 },
+      ];
+      for (let i = 0; i < sessionDefs.length; i++) {
+        const def = sessionDefs[i];
+        const sessionDate = new Date();
+        sessionDate.setDate(sessionDate.getDate() - def.weeksAgo * 7);
+        const { data: session, error: sErr } = await supabase
+          .from('batch_sessions')
+          .insert({ batch_id: batch.id, title: def.title, description: def.description, session_date: sessionDate.toISOString() })
+          .select('id').single();
+        if (sErr) { console.error(`  Failed session "${def.title}": ${sErr.message}`); continue; }
+        const attendanceRows = menteeIds.map((uid, mi) => ({
+          session_id: session.id,
+          user_id: uid,
+          attended: !(i === 1 && mi === 0) && !(i === 3 && mi === 1), // vary attendance a bit
+        }));
+        await supabase.from('session_attendance').upsert(attendanceRows, { onConflict: 'session_id,user_id' });
+      }
+      console.log(`  [Sessions] 5 sample sessions seeded\n`);
     }
 
     // 7. Sample sadhana entries for mentees
@@ -329,6 +366,247 @@ async function seed() {
         { mentor_id: mentorId, mentee_id: menteeIds[0], content: 'Missed last 2 sessions - follow up.', is_private: true },
       ]);
       console.log(`  [MentorNotes] 2 sample notes seeded\n`);
+    }
+
+    // 9. Sadhana entries for the mentor (Suresh) — 14 days
+    const mentorSadhana = [];
+    for (let d = 0; d < 14; d++) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - d);
+      const japaRounds = 14 + Math.floor(Math.random() * 6);
+      mentorSadhana.push({
+        user_id: mentorId,
+        date: date.toISOString().split('T')[0],
+        japa_rounds: japaRounds,
+        japa_score: Math.min(japaRounds * 2.5, 25),
+        mangala_arati: Math.random() > 0.2,
+        morning_program: Math.random() > 0.2,
+        tulasi_puja: Math.random() > 0.4,
+        guru_puja: Math.random() > 0.3,
+        sb_class: Math.random() > 0.3,
+        wake_up_time: '04:00',
+        sleep_time: '21:00',
+        reading_minutes: 20 + Math.floor(Math.random() * 40),
+        hearing_minutes: 15 + Math.floor(Math.random() * 30),
+        total_score: 65 + Math.floor(Math.random() * 30),
+        notes: null,
+      });
+    }
+    const { error: mentorSadhanaErr } = await supabase.from('sadhana_entries').insert(mentorSadhana);
+    if (mentorSadhanaErr) console.error(`  Failed mentor sadhana: ${mentorSadhanaErr.message}`);
+    else console.log(`  [Sadhana] 14 days of entries for mentor (Suresh)\n`);
+
+    // 10. Course completions
+    // Table columns: id, user_id, course_id, status, notes, submitted_at, reviewed_by, reviewed_at, review_notes
+    // We need PENDING entries so the Approvals screen has data to display
+    const { data: courseRows } = await supabase
+      .from('courses')
+      .select('id, title')
+      .in('title', ['Bhakti Shastri Module 1', 'ISKCON Disciples Course (IDC)', 'Youth Preacher Training', 'Intro to Devotional Cooking']);
+
+    const courseMap = {};
+    (courseRows || []).forEach(c => { courseMap[c.title] = c.id; });
+
+    const completionRows = [];
+    const oneWeekAgo = new Date(today); oneWeekAgo.setDate(today.getDate() - 7);
+    const twoWeeksAgo = new Date(today); twoWeeksAgo.setDate(today.getDate() - 14);
+    const oneMonthAgo = new Date(today); oneMonthAgo.setDate(today.getDate() - 30);
+
+    // Pending — show up on approvals screen for the mentor
+    if (menteeIds[0] && courseMap['Bhakti Shastri Module 1']) {
+      completionRows.push({
+        user_id: menteeIds[0],
+        course_id: courseMap['Bhakti Shastri Module 1'],
+        status: 'PENDING',
+        submitted_at: oneWeekAgo.toISOString(),
+      });
+    }
+    if (menteeIds[1] && courseMap['ISKCON Disciples Course (IDC)']) {
+      completionRows.push({
+        user_id: menteeIds[1],
+        course_id: courseMap['ISKCON Disciples Course (IDC)'],
+        status: 'PENDING',
+        submitted_at: twoWeeksAgo.toISOString(),
+      });
+    }
+    // Approved — historical
+    if (menteeIds[0] && courseMap['Intro to Devotional Cooking']) {
+      completionRows.push({
+        user_id: menteeIds[0],
+        course_id: courseMap['Intro to Devotional Cooking'],
+        status: 'APPROVED',
+        submitted_at: oneMonthAgo.toISOString(),
+        reviewed_by: mentorId,
+        reviewed_at: new Date(oneMonthAgo.getTime() + 3 * 86400000).toISOString(),
+        review_notes: 'Great work!',
+      });
+    }
+    if (menteeIds[1] && courseMap['Youth Preacher Training']) {
+      completionRows.push({
+        user_id: menteeIds[1],
+        course_id: courseMap['Youth Preacher Training'],
+        status: 'APPROVED',
+        submitted_at: oneMonthAgo.toISOString(),
+        reviewed_by: mentorId,
+        reviewed_at: new Date(oneMonthAgo.getTime() + 2 * 86400000).toISOString(),
+        review_notes: 'Excellent participation.',
+      });
+    }
+    if (completionRows.length) {
+      const { error: compErr } = await supabase.from('course_completions').insert(completionRows);
+      if (compErr) console.error(`  Failed course_completions: ${compErr.message}`);
+      else console.log(`  [CourseCompletions] ${completionRows.length} rows (2 PENDING, 2 APPROVED)\n`);
+    }
+
+    // 11. Seva logs
+    // Table columns: user_id, department_id, description, hours, notes, date
+    const { data: deptRows } = await supabase
+      .from('reference_items')
+      .select('id, label')
+      .eq('category', 'Service Departments')
+      .in('label', ['Sunday Feast', 'Sankirtan', 'Festivals', 'Devotee Care Team']);
+
+    const deptMap = {};
+    (deptRows || []).forEach(d => { deptMap[d.label] = d.id; });
+
+    const sevaLogs = [];
+    const sevaEntries = [
+      { menteeIdx: 0, dept: 'Sunday Feast',     hours: 4, description: 'Helped with Sunday Feast cooking',       weeksAgo: 1 },
+      { menteeIdx: 0, dept: 'Sankirtan',         hours: 2, description: 'Book distribution on Oxford Street',    weeksAgo: 2 },
+      { menteeIdx: 0, dept: 'Festivals',         hours: 6, description: 'Janmashtami festival preparation',      weeksAgo: 4 },
+      { menteeIdx: 1, dept: 'Devotee Care Team', hours: 3, description: 'Visited elderly devotee in hospital',   weeksAgo: 1 },
+      { menteeIdx: 1, dept: 'Sunday Feast',      hours: 4, description: 'Assisted with Sunday Feast prasadam',   weeksAgo: 3 },
+      { menteeIdx: 1, dept: 'Festivals',         hours: 5, description: 'Ratha Yatra volunteer',                 weeksAgo: 5 },
+    ];
+    for (const e of sevaEntries) {
+      const uid = menteeIds[e.menteeIdx];
+      if (!uid) continue;
+      const sevaDate = new Date(today);
+      sevaDate.setDate(today.getDate() - e.weeksAgo * 7);
+      sevaLogs.push({
+        user_id: uid,
+        department_id: deptMap[e.dept] || null,
+        description: e.description,
+        hours: e.hours,
+        notes: null,
+        date: sevaDate.toISOString().split('T')[0],
+      });
+    }
+    if (sevaLogs.length) {
+      const { error: sevaErr } = await supabase.from('seva_logs').insert(sevaLogs);
+      if (sevaErr) console.error(`  Failed seva_logs: ${sevaErr.message}`);
+      else console.log(`  [SevaLogs] ${sevaLogs.length} entries seeded\n`);
+    }
+
+    // 12. Book progress
+    // Table columns: user_id, book_id, pages_read, completed, completed_at (unique: user_id, book_id)
+    const { data: bookRows } = await supabase
+      .from('books')
+      .select('id, title')
+      .in('title', ['Bhagavad-gita As It Is', 'Sri Isopanisad', 'Nectar of Instruction', 'Nectar of Devotion']);
+
+    const bookMap = {};
+    (bookRows || []).forEach(b => { bookMap[b.title] = b.id; });
+
+    const bookProgressRows = [];
+    const twoMonthsAgo = new Date(today); twoMonthsAgo.setDate(today.getDate() - 60);
+
+    // Mentee 0 (Bhakta John): completed Bhagavad-gita, partially read Nectar of Devotion
+    if (menteeIds[0]) {
+      if (bookMap['Bhagavad-gita As It Is']) {
+        bookProgressRows.push({
+          user_id: menteeIds[0], book_id: bookMap['Bhagavad-gita As It Is'],
+          pages_read: 800, completed: true, completed_at: twoMonthsAgo.toISOString(),
+        });
+      }
+      if (bookMap['Sri Isopanisad']) {
+        bookProgressRows.push({
+          user_id: menteeIds[0], book_id: bookMap['Sri Isopanisad'],
+          pages_read: 55, completed: true, completed_at: oneMonthAgo.toISOString(),
+        });
+      }
+      if (bookMap['Nectar of Devotion']) {
+        bookProgressRows.push({
+          user_id: menteeIds[0], book_id: bookMap['Nectar of Devotion'],
+          pages_read: 120, completed: false,
+        });
+      }
+    }
+    // Mentee 1 (Radha Devi): completed Sri Isopanisad, partially read Bhagavad-gita
+    if (menteeIds[1]) {
+      if (bookMap['Sri Isopanisad']) {
+        bookProgressRows.push({
+          user_id: menteeIds[1], book_id: bookMap['Sri Isopanisad'],
+          pages_read: 55, completed: true, completed_at: oneMonthAgo.toISOString(),
+        });
+      }
+      if (bookMap['Bhagavad-gita As It Is']) {
+        bookProgressRows.push({
+          user_id: menteeIds[1], book_id: bookMap['Bhagavad-gita As It Is'],
+          pages_read: 350, completed: false,
+        });
+      }
+      if (bookMap['Nectar of Instruction']) {
+        bookProgressRows.push({
+          user_id: menteeIds[1], book_id: bookMap['Nectar of Instruction'],
+          pages_read: 80, completed: false,
+        });
+      }
+    }
+    if (bookProgressRows.length) {
+      const { error: bookPErr } = await supabase
+        .from('book_progress')
+        .upsert(bookProgressRows, { onConflict: 'user_id,book_id' });
+      if (bookPErr) console.error(`  Failed book_progress: ${bookPErr.message}`);
+      else console.log(`  [BookProgress] ${bookProgressRows.length} entries seeded\n`);
+    }
+
+    // 13. Audit log
+    // Table columns: actor_id, action, target_type, target_id, details, created_at
+    const adminId = userIds['admin@bhaktisteps.com'];
+    const auditRows = [];
+    if (adminId && mentorId) {
+      auditRows.push({
+        actor_id: adminId,
+        action: 'APPROVE_MENTOR',
+        target_type: 'USER',
+        target_id: mentorId,
+        details: { note: 'Approved mentor application for Suresh Gupta' },
+        created_at: oneMonthAgo.toISOString(),
+      });
+    }
+    if (mentorId && menteeIds[0]) {
+      auditRows.push({
+        actor_id: mentorId,
+        action: 'ADD_MEMBER',
+        target_type: 'BATCH',
+        target_id: batch.id,
+        details: { mentee_id: menteeIds[0], note: 'Added Bhakta John to Wednesday Evening Batch' },
+        created_at: new Date(today.getTime() - 35 * 86400000).toISOString(),
+      });
+      auditRows.push({
+        actor_id: mentorId,
+        action: 'APPROVE_COURSE',
+        target_type: 'COURSE_COMPLETION',
+        target_id: null,
+        details: { mentee_id: menteeIds[0], course: 'Intro to Devotional Cooking' },
+        created_at: new Date(oneMonthAgo.getTime() + 3 * 86400000).toISOString(),
+      });
+    }
+    if (adminId && menteeIds[1]) {
+      auditRows.push({
+        actor_id: adminId,
+        action: 'UPDATE_USER_ROLES',
+        target_type: 'USER',
+        target_id: menteeIds[1],
+        details: { roles: ['MENTEE'], note: 'Assigned MENTEE role to Radha Devi' },
+        created_at: twoMonthsAgo.toISOString(),
+      });
+    }
+    if (auditRows.length) {
+      const { error: auditErr } = await supabase.from('audit_log').insert(auditRows);
+      if (auditErr) console.error(`  Failed audit_log: ${auditErr.message}`);
+      else console.log(`  [AuditLog] ${auditRows.length} entries seeded\n`);
     }
   }
 

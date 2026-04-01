@@ -18,6 +18,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Share,
+  Alert,
   ActivityIndicator,
 } from 'react-native';
 import Svg, { Line, Polyline, Polygon, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
@@ -73,7 +74,7 @@ export const MentorDashboardScreen = ({ account, onNavigate, onTabSwitch }) => {
         if (menteesRes?.length) {
           setDashboard(prev => ({ ...prev, totalMentees: menteesRes.length }));
         }
-      } catch { /* fallback */ }
+      } catch (e) { console.error('[MentorDashboard load]', e); /* fallback */ }
     };
     load();
   }, [account?.id]);
@@ -126,7 +127,7 @@ export const MentorDashboardScreen = ({ account, onNavigate, onTabSwitch }) => {
         <>
           <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Needs Attention</Text>
           {dashboard.needsAttention.map((item, index) => (
-            <Card key={index} variant="attention" onPress={() => onNavigate?.('menteeDetail')}>
+            <Card key={index} variant="attention" onPress={() => onNavigate?.('menteeDetail', { menteeId: item.id })}>
               <View style={styles.attentionRow}>
                 <View style={styles.attentionLeft}>
                   <View style={[styles.avatar, { backgroundColor: item.color }]}>
@@ -137,7 +138,7 @@ export const MentorDashboardScreen = ({ account, onNavigate, onTabSwitch }) => {
                     <Text style={[styles.attentionReason, { color: colors.text.secondary }]}>{item.reason}</Text>
                   </View>
                 </View>
-                <TouchableOpacity onPress={() => {}}>
+                <TouchableOpacity onPress={() => onNavigate?.('menteeDetail', { menteeId: item.id })}>
                   <Text style={[styles.contactButton, { color: colors.primary }]}>Contact</Text>
                 </TouchableOpacity>
               </View>
@@ -149,13 +150,13 @@ export const MentorDashboardScreen = ({ account, onNavigate, onTabSwitch }) => {
       {/* Batches */}
       <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Batches</Text>
       {batches.map((batch, index) => (
-        <Card key={index} variant="form" onPress={() => onNavigate?.('batchDetail')}>
+        <Card key={index} variant="form" onPress={() => onNavigate?.('batchDetail', { batchId: batch.id })}>
           <View style={styles.batchHeader}>
             <Text style={[styles.batchName, { color: colors.text.primary }]}>{batch.name}</Text>
             <Text style={[styles.batchSchedule, { color: colors.text.secondary }]}>{batch.schedule}</Text>
           </View>
           <View style={styles.menteeAvatars}>
-            {batch.mentees.map((mentee, i) => (
+            {normalizeBatchMembers(batch).map((mentee, i) => (
               <TouchableOpacity
                 key={i}
                 style={[
@@ -165,7 +166,7 @@ export const MentorDashboardScreen = ({ account, onNavigate, onTabSwitch }) => {
                   mentee.ring === 'success' && styles.avatarRingSuccess,
                   mentee.ring === 'warning' && styles.avatarRingWarning,
                 ]}
-                onPress={() => onNavigate?.('menteeDetail')}
+                onPress={() => onNavigate?.('menteeDetail', { menteeId: mentee.id })}
               >
                 <Text style={styles.smallAvatarText}>{mentee.initials}</Text>
               </TouchableOpacity>
@@ -173,7 +174,7 @@ export const MentorDashboardScreen = ({ account, onNavigate, onTabSwitch }) => {
           </View>
           <View style={styles.batchBottomRow}>
             <Text style={[styles.nextSession, { color: colors.text.secondary }]}>Next session: Thu 27 Feb, 18:30</Text>
-            <TouchableOpacity onPress={() => onNavigate?.('batchDetail')}>
+            <TouchableOpacity onPress={() => onNavigate?.('batchDetail', { batchId: batch.id })}>
               <Text style={[styles.viewLink, { color: colors.primary }]}>View</Text>
             </TouchableOpacity>
           </View>
@@ -196,7 +197,7 @@ export const BatchesListScreen = ({ account, onNavigate }) => {
       try {
         const res = await BatchService.listBatchesByMentor(account?.id);
         if (res?.length) setBatches(res);
-      } catch { /* fallback */ }
+      } catch (e) { console.error('[BatchesList load]', e); /* fallback */ }
     };
     load();
   }, [account?.id]);
@@ -206,12 +207,12 @@ export const BatchesListScreen = ({ account, onNavigate }) => {
       <Text style={[styles.screenTitle, { color: colors.text.primary }]}>Batches</Text>
 
       {batches.map((batch, index) => (
-        <Card key={index} variant="form" onPress={() => onNavigate?.('batchDetail')}>
+        <Card key={index} variant="form" onPress={() => onNavigate?.('batchDetail', { batchId: batch.id })}>
           <Text style={[styles.batchName, { color: colors.text.primary }]}>{batch.name}</Text>
           <Text style={[styles.batchSchedule, { color: colors.text.secondary }]}>{batch.schedule} • {batch.location}</Text>
           <View style={styles.batchBottomRow}>
             <View style={styles.batchAvatars}>
-              {batch.mentees.map((m, i) => (
+              {normalizeBatchMembers(batch).map((m, i) => (
                 <View key={i} style={[styles.smallAvatar, { backgroundColor: m.color }]}>
                   <Text style={styles.smallAvatarText}>{m.initials}</Text>
                 </View>
@@ -242,7 +243,40 @@ const HISTORY_ICONS = {
   allocation: PencilSimple,
 };
 
-export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
+// Normalize a session from API shape (sessionDate, description, sessionAttendance)
+// to the display shape the UI expects (date "dd/mm", module, description, attendees)
+const normalizeSession = (s) => {
+  let date = s.date;
+  if (!date && s.sessionDate) {
+    const d = new Date(s.sessionDate);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    date = `${day}/${month}`;
+  }
+  return {
+    ...s,
+    date: date || '',
+    module: s.module || '',
+    description: s.description || '',
+    // API returns sessionAttendance array; MockData has attendees object — normalise to object
+    attendees: s.attendees || Object.fromEntries(
+      (s.sessionAttendance || []).map(a => [a.userId, a.attended ? 'present' : 'absent'])
+    ),
+  };
+};
+
+// Normalize batch members from either MockData shape ({ name, initials, color, ring })
+// or API shape (batchMembers[*].users.firstName/lastName)
+const normalizeBatchMembers = (batch) =>
+  (batch.mentees || batch.batchMembers || []).map(m => ({
+    id: m.id || m.userId || m.name,
+    name: m.name || (m.users ? `${m.users.firstName} ${m.users.lastName}` : 'Unknown'),
+    initials: m.initials || (m.name || m.users?.firstName || '?')[0]?.toUpperCase() || '?',
+    color: m.color || '#A8C8AD',
+    ring: m.ring || 'success',
+  }));
+
+export const BatchDetailScreen = ({ batchId, account, onBack, onNavigate }) => {
   const { colors } = useTheme();
   const [batch, setBatch] = useState(MockData.batches[0]);
   const showToast = useToast();
@@ -251,12 +285,17 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await BatchService.listBatchesByMentor(account?.id);
-        if (res?.length) setBatch(res[0]);
-      } catch { /* fallback */ }
+        if (batchId) {
+          const res = await BatchService.getBatchWithMembers(batchId);
+          if (res) setBatch(res);
+        } else {
+          const res = await BatchService.listBatchesByMentor(account?.id);
+          if (res?.length) setBatch(res[0]);
+        }
+      } catch (e) { console.error('[BatchDetail load]', e); /* fallback */ }
     };
     load();
-  }, [account?.id]);
+  }, [batchId, account?.id]);
 
   const handleInviteMentee = async () => {
     setInviting(true);
@@ -277,22 +316,38 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
   const [selectedSessionForDetail, setSelectedSessionForDetail] = useState(null);
   const [selectedModuleForHistory, setSelectedModuleForHistory] = useState(null);
 
-  // Edit Batch state
-  const [editName, setEditName] = useState(batch.name);
-  const [editSchedule, setEditSchedule] = useState(batch.schedule);
-  const [editLocation, setEditLocation] = useState(batch.location);
-  const [editStatus, setEditStatus] = useState(batch.status);
-  const [editModules, setEditModules] = useState(batch.modules.map(m => ({ ...m })));
+  // Edit Batch state — initialized from MockData defaults; synced to real batch via useEffect below
+  const [editName, setEditName] = useState(batch.name || '');
+  const [editSchedule, setEditSchedule] = useState(batch.schedule || '');
+  const [editLocation, setEditLocation] = useState(batch.location || '');
+  const [editStatus, setEditStatus] = useState(batch.status || 'active');
+  const [editModules, setEditModules] = useState((batch.modules || []).map(m => ({ ...m })));
+
+  // Sync edit fields whenever the real batch loads from API
+  useEffect(() => {
+    setEditName(batch.name || '');
+    setEditSchedule(batch.schedule || '');
+    setEditLocation(batch.location || '');
+    setEditStatus(batch.status || 'active');
+    setEditModules((batch.modules || []).map(m => ({ ...m })));
+  }, [batch.id]);
 
   // New Session state
   const [newSessionName, setNewSessionName] = useState('');
   const [newSessionNotes, setNewSessionNotes] = useState('');
   const [newSessionModules, setNewSessionModules] = useState([]);
-  const [newSessionAttendance, setNewSessionAttendance] = useState(
-    batch.mentees.reduce((acc, m) => ({ ...acc, [m.name]: 'present' }), {})
-  );
+  const [newSessionAttendance, setNewSessionAttendance] = useState({});
 
-  const sessions = batch.sessions || [];
+  // Add Module state
+  const [newModuleTitle, setNewModuleTitle] = useState('');
+
+  // Re-initialize attendance map when batch members change (API load)
+  useEffect(() => {
+    const members = normalizeBatchMembers(batch);
+    setNewSessionAttendance(members.reduce((acc, m) => ({ ...acc, [m.id]: 'present' }), {}));
+  }, [batch.id]);
+
+  const sessions = (batch.sessions || batch.batchSessions || []).map(normalizeSession);
   const activeSession = sessions[activeSessionIndex];
 
   // H2: Next session reminder
@@ -321,10 +376,29 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
     );
   };
 
-  const cycleAttendance = (name) => {
+  // Key attendance by member id (consistent with initialization)
+  const cycleAttendance = (memberId) => {
     const cycle = { present: 'late', late: 'absent', absent: 'present' };
-    setNewSessionAttendance(prev => ({ ...prev, [name]: cycle[prev[name]] }));
+    setNewSessionAttendance(prev => ({ ...prev, [memberId]: cycle[prev[memberId] || 'present'] }));
   };
+
+  // Derive history from real sessions + member joins when DB data is loaded (no history column in schema)
+  const derivedHistory = batch.history || [
+    ...sessions.map(s => ({
+      type: 'session',
+      text: `Session "${s.title}" was run`,
+      date: s.sessionDate
+        ? new Date(s.sessionDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+        : s.date || '',
+    })),
+    ...normalizeBatchMembers(batch).map(m => ({
+      type: 'member_join',
+      text: `${m.name} joined the group`,
+      date: m.joinedAt
+        ? new Date(m.joinedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+        : '',
+    })),
+  ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const moduleSessions = selectedModuleForHistory
     ? sessions.filter(s => s.module === selectedModuleForHistory)
@@ -360,11 +434,11 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
 
         {/* Members */}
         <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Members</Text>
-        {batch.mentees.map((mentee, index) => (
+        {normalizeBatchMembers(batch).map((mentee, index) => (
           <TouchableOpacity
             key={index}
             style={[styles.memberRow, { borderBottomColor: colors.border }]}
-            onPress={() => onNavigate?.('menteeDetail')}
+            onPress={() => onNavigate?.('menteeDetail', { menteeId: mentee.id })}
           >
             <View style={styles.memberLeft}>
               <View style={[styles.avatar, { backgroundColor: mentee.color }]}>
@@ -449,7 +523,7 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
               {/* Fixed name column */}
               <View>
                 <Text style={[styles.gridHeaderLeft, { color: colors.text.secondary }]}>Mentee</Text>
-                {batch.mentees.map((mentee, mIndex) => (
+                {normalizeBatchMembers(batch).map((mentee, mIndex) => (
                   <View key={mIndex} style={styles.gridFixedCell}>
                     <Text style={[styles.gridCellLeft, { color: colors.text.primary }]}>{mentee.name}</Text>
                   </View>
@@ -460,7 +534,7 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
                 <View>
                   {/* Date headers */}
                   <View style={styles.gridRow}>
-                    {batch.attendance.map((a, i) => (
+                    {(batch.attendance || []).map((a, i) => (
                       <TouchableOpacity key={i} onPress={() => {
                         const matchingSession = sessions.find(s => s.date === a.date);
                         if (matchingSession) openSessionDetail(matchingSession);
@@ -470,10 +544,10 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
                     ))}
                   </View>
                   {/* Data rows */}
-                  {batch.mentees.map((mentee, mIndex) => (
+                  {normalizeBatchMembers(batch).map((mentee, mIndex) => (
                     <View key={mIndex} style={[styles.gridRow, styles.gridFixedCell]}>
-                      {batch.attendance.map((session, sIndex) => {
-                        const status = session.data[mentee.name];
+                      {(batch.attendance || []).map((session, sIndex) => {
+                        const status = session.data?.[mentee.name];
                         return (
                           <View key={sIndex} style={[styles.gridCell, { width: 52 }]}>
                             <View style={[
@@ -496,7 +570,7 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
 
         {/* Modules — H8: tappable to show session history */}
         <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Modules</Text>
-        {batch.modules.map((module, index) => (
+        {(batch.modules || []).map((module, index) => (
           <TouchableOpacity key={index} style={[styles.moduleRow, { borderBottomColor: colors.border }]} onPress={() => openModuleSessions(module.title)}>
             <Text style={[styles.moduleName, { color: colors.text.primary }]}>{module.title}</Text>
             <View style={[
@@ -520,7 +594,7 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
         <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>History</Text>
         <View style={[styles.batchHistoryContainer, { borderColor: colors.border }]}>
           <ScrollView nestedScrollEnabled>
-            {(batch.history || []).map((entry, index) => {
+            {derivedHistory.map((entry, index) => {
               const Icon = HISTORY_ICONS[entry.type] || CalendarCheck;
               return (
                 <View key={index} style={[styles.historyRow, { borderBottomColor: colors.border }]}>
@@ -547,7 +621,8 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
             setNewSessionName('');
             setNewSessionNotes('');
             setNewSessionModules([]);
-            setNewSessionAttendance(batch.mentees.reduce((acc, m) => ({ ...acc, [m.name]: 'present' }), {}));
+            const members = normalizeBatchMembers(batch);
+            setNewSessionAttendance(members.reduce((acc, m) => ({ ...acc, [m.id]: 'present' }), {}));
             newSessionRef.current?.present();
           }}>
             New Session
@@ -614,9 +689,32 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
           </View>
 
           <Text style={[styles.sheetDetailLabel, { color: colors.text.secondary }]}>Members</Text>
-          {batch.mentees.map((m, i) => (
-            <TouchableOpacity key={i} style={[styles.editMemberRow, { borderBottomColor: colors.border }]} onPress={() => {
-              showToast(`Remove ${m.name} from batch?`, 'error');
+          {normalizeBatchMembers(batch).map((m, i) => (
+            <TouchableOpacity key={m.id || i} style={[styles.editMemberRow, { borderBottomColor: colors.border }]} onPress={() => {
+              Alert.alert(
+                'Remove Member',
+                `Remove ${m.name} from this batch?`,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Remove', style: 'destructive',
+                    onPress: async () => {
+                      try {
+                        await BatchService.removeBatchMember(batch.id, m.userId || m.id);
+                        setBatch(prev => ({
+                          ...prev,
+                          batchMembers: (prev.batchMembers || []).filter(bm => (bm.userId || bm.id) !== (m.userId || m.id)),
+                          mentees: (prev.mentees || []).filter(mt => mt.id !== m.id),
+                        }));
+                        showToast(`${m.name} removed from batch`, 'success');
+                      } catch (e) {
+                        console.error('[removeBatchMember]', e);
+                        showToast('Failed to remove member', 'error');
+                      }
+                    },
+                  },
+                ]
+              );
             }}>
               <View style={[styles.smallAvatar, { backgroundColor: m.color, borderWidth: 0 }]}>
                 <Text style={styles.smallAvatarText}>{m.initials}</Text>
@@ -645,11 +743,33 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
               </View>
             </TouchableOpacity>
           ))}
-          <Button variant="secondary" style={{ marginTop: spacing.sm }} onPress={() => showToast('Add module placeholder', 'success')}>
-            + Add Module
-          </Button>
+          <View style={{ flexDirection: 'row', marginTop: spacing.sm, gap: spacing.sm }}>
+            <TextInput
+              style={[styles.sheetInput, { flex: 1, marginBottom: 0, borderColor: colors.border, color: colors.text.primary }]}
+              placeholder="New module title..."
+              placeholderTextColor={colors.text.secondary}
+              value={newModuleTitle}
+              onChangeText={setNewModuleTitle}
+            />
+            <Button
+              variant="secondary"
+              style={{ paddingHorizontal: spacing.md }}
+              onPress={() => {
+                const trimmed = newModuleTitle.trim();
+                if (!trimmed) return;
+                setEditModules(prev => [...prev, { title: trimmed, status: 'upcoming' }]);
+                setNewModuleTitle('');
+              }}
+            >
+              Add
+            </Button>
+          </View>
 
-          <Button variant="primary" style={{ marginTop: spacing.lg }} onPress={() => {
+          <Button variant="primary" style={{ marginTop: spacing.lg }} onPress={async () => {
+            try {
+              const updated = await BatchService.updateBatch(batch.id, { name: editName, schedule: editSchedule, location: editLocation, status: editStatus, modules: editModules });
+              setBatch(prev => ({ ...prev, ...(updated || { name: editName, schedule: editSchedule, location: editLocation, status: editStatus }) }));
+            } catch (e) { console.error('[updateBatch]', e); showToast('Failed to save batch', 'error'); return; }
             editBatchRef.current?.dismiss();
             showToast('Batch updated successfully', 'success');
           }}>
@@ -669,7 +789,7 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
 
           <Text style={[styles.sheetDetailLabel, { color: colors.text.secondary }]}>Modules</Text>
           <View style={styles.moduleTagRow}>
-            {batch.modules.filter(m => m.status === 'active').map((m, i) => (
+            {(batch.modules || []).filter(m => m.status === 'active').map((m, i) => (
               <TouchableOpacity
                 key={i}
                 style={[styles.moduleTag, { borderColor: colors.border }, newSessionModules.includes(m.title) && { backgroundColor: colors.primary, borderColor: colors.primary }]}
@@ -681,24 +801,34 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
           </View>
 
           <Text style={[styles.sheetDetailLabel, { color: colors.text.secondary }]}>Attendance</Text>
-          {batch.mentees.map((m, i) => (
-            <TouchableOpacity key={i} style={[styles.attendanceToggleRow, { borderBottomColor: colors.border }]} onPress={() => cycleAttendance(m.name)}>
+          {normalizeBatchMembers(batch).map((m) => (
+            <TouchableOpacity key={m.id} style={[styles.attendanceToggleRow, { borderBottomColor: colors.border }]} onPress={() => cycleAttendance(m.id)}>
               <Text style={[styles.attendeeName, { color: colors.text.primary }]}>{m.name}</Text>
               <View style={[styles.statusBadge, {
-                backgroundColor: newSessionAttendance[m.name] === 'present' ? `${colors.status.success}20` :
-                  newSessionAttendance[m.name] === 'late' ? `${colors.status.warning}20` : `${colors.status.error}20`
+                backgroundColor: (newSessionAttendance[m.id] || 'present') === 'present' ? `${colors.status.success}20` :
+                  (newSessionAttendance[m.id] || 'present') === 'late' ? `${colors.status.warning}20` : `${colors.status.error}20`
               }]}>
                 <Text style={{
-                  color: newSessionAttendance[m.name] === 'present' ? colors.status.success :
-                    newSessionAttendance[m.name] === 'late' ? colors.status.warning : colors.status.error,
+                  color: (newSessionAttendance[m.id] || 'present') === 'present' ? colors.status.success :
+                    (newSessionAttendance[m.id] || 'present') === 'late' ? colors.status.warning : colors.status.error,
                   ...typography.caption,
                   textTransform: 'capitalize',
-                }}>{newSessionAttendance[m.name]}</Text>
+                }}>{newSessionAttendance[m.id] || 'present'}</Text>
               </View>
             </TouchableOpacity>
           ))}
 
-          <Button variant="primary" style={{ marginTop: spacing.lg }} onPress={() => {
+          <Button variant="primary" style={{ marginTop: spacing.lg }} onPress={async () => {
+            if (!newSessionName.trim()) { showToast('Enter a session name', 'error'); return; }
+            try {
+              await BatchService.createSession(batch.id, {
+                title: newSessionName,
+                notes: newSessionNotes,
+                sessionDate: new Date().toISOString().slice(0, 10),
+                attendance: newSessionAttendance,
+                createdBy: account?.id,
+              });
+            } catch (e) { console.error('[createSession]', e); showToast('Failed to log session', 'error'); return; }
             newSessionRef.current?.dismiss();
             showToast('Session logged successfully', 'success');
           }}>
@@ -733,46 +863,53 @@ export const BatchDetailScreen = ({ account, onBack, onNavigate }) => {
 // Mentee Detail Screen (§6.9) — Enhanced
 // ═══════════════════════════════════════════════════════════
 
-export const MenteeDetailScreen = ({ account, onBack, onRemoveUser, headerExtra }) => {
+export const MenteeDetailScreen = ({ menteeId, account, onBack, onRemoveUser, headerExtra }) => {
   const { colors } = useTheme();
   const [mentee, setMentee] = useState(MockData.menteeDetail);
   const [activeTab, setActiveTab] = useState('sadhana');
   const [noteText, setNoteText] = useState('');
-  const [notes, setNotes] = useState(mentee.notes);
+  const [notes, setNotes] = useState(MockData.menteeDetail.notes);
   const [sevaLogs, setSevaLogs] = useState(MockData.sevaLogs);
   const [courses, setCourses] = useState(MockData.courses);
-  const [attendance, setAttendance] = useState(attendance);
+  const [attendance, setAttendance] = useState([]);
+  const [sadhanaHistory, setSadhanaHistory] = useState(MockData.submissionHistory);
   const [timescale, setTimescale] = useState('7');
   const sessionDetailRef = useRef(null);
   const [selectedSession, setSelectedSession] = useState(null);
 
   useEffect(() => {
+    const targetId = menteeId || account?.id;
+    if (!targetId) return;
     const load = async () => {
       try {
-        // In a real implementation, menteeId would be passed as a prop
-        // For now we use the mock data as fallback
-        const [sevaRes, coursesRes] = await Promise.all([
-          SevaService.listSevaLogs(mentee.id || account?.id),
-          CourseService.listCourses(),
+        const [profileRes, sevaRes, coursesRes, notesRes, sadhanaRes] = await Promise.all([
+          menteeId ? UserService.getUserProfile(menteeId) : Promise.resolve(null),
+          SevaService.listSevaLogs(targetId),
+          CourseService.listCourseCompletions(targetId),
+          menteeId ? MentorNoteService.listNotesByMentee(menteeId) : Promise.resolve([]),
+          SadhanaService.listSadhanaEntries(targetId, { limit: 30 }),
         ]);
+        if (profileRes) setMentee(profileRes);
         if (sevaRes?.items) setSevaLogs(sevaRes.items);
         if (coursesRes?.length) setCourses(coursesRes);
-      } catch { /* fallback */ }
+        if (notesRes?.length) setNotes(notesRes);
+        if (sadhanaRes?.items) setSadhanaHistory(sadhanaRes.items);
+      } catch (e) { console.error('[MenteeDetail load]', e); /* fallback to MockData */ }
     };
     load();
-  }, [mentee.id, account?.id]);
+  }, [menteeId, account?.id]);
 
   const handleSendNote = async () => {
     if (!noteText.trim()) return;
     try {
       await MentorNoteService.createNote(account?.id, mentee.id, noteText.trim());
-    } catch { /* still show locally */ }
+    } catch (e) { console.error('[sendMentorNote]', e); /* still show locally */ }
     setNotes([{ date: 'Just now', text: noteText.trim() }, ...notes]);
     setNoteText('');
   };
 
   const openSessionFromAttendance = (entry) => {
-    const sessions = (mentee.batch ? MockData.batches[0].sessions : MockData.batches[0].sessions) || [];
+    const sessions = MockData.batches[0]?.sessions || [];
     const match = sessions.find(s => s.title === entry.session);
     if (match) {
       setSelectedSession(match);
@@ -782,12 +919,12 @@ export const MenteeDetailScreen = ({ account, onBack, onRemoveUser, headerExtra 
 
   const tabs = ['sadhana', 'seva', 'courses', 'attendance', 'notes'];
 
-  // I2: Chart data (reuse mentee's submission history)
-  const chartDataAll = MockData.submissionHistory; // TODO: fetch mentee-specific history via SadhanaService
+  // Chart data from real sadhana history
+  const chartDataAll = sadhanaHistory.map(e => ({ score: e.totalScore || e.score || 0 }));
   const timeFilteredData = chartDataAll.slice(0, parseInt(timescale));
   const chartData = timeFilteredData.slice().reverse();
   const scores = chartData.map(d => d.score);
-  const minScore = Math.min(...scores);
+  const minScore = scores.length > 0 ? Math.min(...scores) : 0;
   const yMin = Math.max(0, Math.floor((minScore - 10) / 5) * 5);
   const yMax = 100;
   const yLabels = Array.from({ length: 5 }, (_, i) =>
@@ -1108,17 +1245,31 @@ export const MenteeDetailScreen = ({ account, onBack, onRemoveUser, headerExtra 
 
 export const ApprovalsScreen = ({ account }) => {
   const { colors } = useTheme();
+  const showToast = useToast();
   const approvalSheetRef = useRef(null);
   const [pendingApprovals, setPendingApprovals] = useState(MockData.pendingApprovals);
   const [selectedApproval, setSelectedApproval] = useState(null);
   const [approvalComment, setApprovalComment] = useState('');
 
+  // Normalize Supabase shape (nested users/courses) to display shape
+  const normalizeApproval = (a) => ({
+    id: a.id,
+    menteeName: a.users
+      ? `${a.users.firstName || ''} ${a.users.lastName || ''}`.trim()
+      : (a.menteeName || 'Unknown'),
+    courseName: a.courses?.title || a.courseName || 'Unknown course',
+    submitted: a.submittedAt
+      ? new Date(a.submittedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      : (a.submitted || ''),
+    notes: a.notes || '',
+  });
+
   useEffect(() => {
     const load = async () => {
       try {
         const res = await CourseService.listPendingApprovals();
-        if (res?.length) setPendingApprovals(res);
-      } catch { /* fallback */ }
+        if (res?.length) setPendingApprovals(res.map(normalizeApproval));
+      } catch (e) { console.error('[ApprovalsScreen load]', e); /* fallback */ }
     };
     load();
   }, []);
@@ -1127,6 +1278,34 @@ export const ApprovalsScreen = ({ account }) => {
     setSelectedApproval(approval);
     setApprovalComment('');
     approvalSheetRef.current?.present();
+  };
+
+  const handleApprove = async () => {
+    if (!selectedApproval?.id) { showToast?.('Cannot approve — no record ID (using demo data)', 'error'); return; }
+    try {
+      await CourseService.reviewCourseCompletion(selectedApproval.id, {
+        status: 'approved',
+        reviewNotes: approvalComment,
+        reviewedBy: account?.id,
+      });
+      setPendingApprovals(prev => prev.filter(a => a.id !== selectedApproval.id));
+    } catch (e) { console.error('[approveCompletion]', e); showToast?.('Failed to approve', 'error'); return; }
+    approvalSheetRef.current?.dismiss();
+    showToast?.('Course approved', 'success');
+  };
+
+  const handleReject = async () => {
+    if (!selectedApproval?.id) { showToast?.('Cannot reject — no record ID (using demo data)', 'error'); return; }
+    try {
+      await CourseService.reviewCourseCompletion(selectedApproval.id, {
+        status: 'rejected',
+        reviewNotes: approvalComment,
+        reviewedBy: account?.id,
+      });
+      setPendingApprovals(prev => prev.filter(a => a.id !== selectedApproval.id));
+    } catch (e) { console.error('[rejectCompletion]', e); showToast?.('Failed to reject', 'error'); return; }
+    approvalSheetRef.current?.dismiss();
+    showToast?.('Course rejected', 'success');
   };
 
   const recentDecisions = [
@@ -1190,10 +1369,10 @@ export const ApprovalsScreen = ({ account }) => {
               placeholderTextColor={colors.text.secondary}
             />
             <View style={styles.sheetButtonRow}>
-              <Button variant="success" style={styles.sheetButton} onPress={() => approvalSheetRef.current?.dismiss()}>
+              <Button variant="success" style={styles.sheetButton} onPress={handleApprove}>
                 Approve
               </Button>
-              <Button variant="destructive" style={styles.sheetButton} onPress={() => approvalSheetRef.current?.dismiss()}>
+              <Button variant="destructive" style={styles.sheetButton} onPress={handleReject}>
                 Reject
               </Button>
             </View>
@@ -1213,8 +1392,6 @@ import { TodayScreen, ProgressScreen, SevaBooksScreen } from './MenteeScreens';
 export const MentorSadhanaScreen = ({ account }) => {
   const { colors } = useTheme();
   const [activeView, setActiveView] = useState('today');
-  const mentorData = MockData.mentorSadhana;
-  const sadhanaData = { ...MockData.sadhana, japaTarget: mentorData.japaTarget, japaDefault: mentorData.japaDefault };
 
   const views = [
     { id: 'today', label: 'Today' },
@@ -1239,11 +1416,11 @@ export const MentorSadhanaScreen = ({ account }) => {
         ))}
       </View>
 
-      {/* Content */}
+      {/* Content — each child screen loads its own data via account prop */}
       <View style={{ flex: 1 }}>
-        {activeView === 'today' && <TodayScreen account={account} sadhanaData={sadhanaData} sevaLogs={mentorData.sevaLogs} />}
-        {activeView === 'progress' && <ProgressScreen account={account} progressStats={mentorData.progressStats} submissionHistory={mentorData.submissionHistory} />}
-        {activeView === 'seva' && <SevaBooksScreen account={account} sevaLogs={mentorData.sevaLogs} courses={mentorData.courses} />}
+        {activeView === 'today' && <TodayScreen account={account} />}
+        {activeView === 'progress' && <ProgressScreen account={account} />}
+        {activeView === 'seva' && <SevaBooksScreen account={account} />}
       </View>
     </View>
   );
@@ -1276,7 +1453,7 @@ export const MentorProfileScreen = ({ account, onLogout }) => {
             address: res.address || '',
           });
         }
-      } catch { /* fallback */ }
+      } catch (e) { console.error('[MentorProfileScreen load]', e); /* fallback */ }
     };
     load();
   }, [account?.id]);
@@ -1290,6 +1467,19 @@ export const MentorProfileScreen = ({ account, onLogout }) => {
   const [editSpiritualMaster, setEditSpiritualMaster] = useState(profile.spiritualMaster || '');
   const [editDob, setEditDob] = useState(profile.dob || '');
   const [editAddress, setEditAddress] = useState(profile.address || '');
+
+  // Sync edit fields when real profile loads from API
+  useEffect(() => {
+    setEditName(profile.name || '');
+    setEditEmail(profile.email || '');
+    setEditPhone(profile.phone || '');
+    setEditJapaTarget(profile.japaTarget || 16);
+    setEditInitiatedName(profile.initiatedName || '');
+    setEditInitiationYear(String(profile.initiationYear || ''));
+    setEditSpiritualMaster(profile.spiritualMaster || '');
+    setEditDob(profile.dob || '');
+    setEditAddress(profile.address || '');
+  }, [profile.email]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -1383,7 +1573,22 @@ export const MentorProfileScreen = ({ account, onLogout }) => {
           <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary, height: 64, textAlignVertical: 'top' }]} value={editAddress} onChangeText={setEditAddress} placeholder="Home address" placeholderTextColor={colors.text.secondary} multiline />
           <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Date Joined</Text>
           <Text style={[styles.sheetDateText, { color: colors.text.primary }]}>{profile.dateJoined}</Text>
-          <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={() => {
+          <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={async () => {
+            try {
+              await UserService.updateUserProfile(account?.id, {
+                firstName: editName.split(' ')[0],
+                lastName: editName.split(' ').slice(1).join(' ') || undefined,
+                email: editEmail,
+                phone: editPhone,
+                japaTarget: editJapaTarget,
+                initiatedName: editInitiatedName,
+                initiationYear: editInitiationYear ? Number(editInitiationYear) : undefined,
+                spiritualMaster: editSpiritualMaster,
+                dob: editDob,
+                address: editAddress,
+              });
+              setProfile(prev => ({ ...prev, name: editName, email: editEmail, phone: editPhone, japaTarget: editJapaTarget, initiatedName: editInitiatedName, initiationYear: editInitiationYear, spiritualMaster: editSpiritualMaster, dob: editDob, address: editAddress }));
+            } catch (e) { console.error('[updateMentorProfile]', e); showToast?.('Failed to save profile', 'error'); return; }
             showToast?.('Profile saved!', 'success');
             profileSheetRef.current?.dismiss();
           }}>

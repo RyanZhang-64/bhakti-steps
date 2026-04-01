@@ -20,6 +20,7 @@ export const getUserProfile = async (userId) => {
   if (error) throw error;
   const profile = toCamel(data);
   profile.roles = (data.user_roles || []).map(r => r.role.toLowerCase());
+  profile.name = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || profile.email;
   return profile;
 };
 
@@ -54,6 +55,7 @@ export const listAllUsers = async ({ limit = 30, offset = 0 } = {}) => {
   const items = data.map(row => {
     const u = toCamel(row);
     u.roles = (row.user_roles || []).map(r => r.role.toLowerCase());
+    u.name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email;
     return u;
   });
   return { items, hasMore: data.length === limit };
@@ -112,6 +114,7 @@ export const listMenteesByMentor = async (mentorId) => {
       seen.add(bm.users.id);
       const u = toCamel(bm.users);
       u.roles = (bm.users.user_roles || []).map(r => r.role.toLowerCase());
+      u.name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email;
       mentees.push(u);
     }
   }
@@ -130,5 +133,10 @@ export const listPendingUsers = async () => {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data.map(toCamel);
+  return data.map(row => {
+    const u = toCamel(row);
+    u.roles = (row.user_roles || []).map(r => r.role.toLowerCase());
+    u.name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email;
+    return u;
+  });
 };

@@ -55,11 +55,11 @@ import {
   SettingsScreen,
   AdminUserDetailScreen,
   AuditLogScreen,
-  DataEditorScreen,
 } from './src/screens/AdminScreens';
 
 // Data
 import { MockData } from './src/mockData';
+import { SadhanaService, CourseService } from './src/api';
 
 // ═══════════════════════════════════════════════════════════
 // Animated Tab Layer — smooth fade transitions
@@ -130,7 +130,7 @@ function AppContent() {
   const [currentRole, setCurrentRole] = useState('mentee');
   const [currentTab, setCurrentTab] = useState('today');
   const [drillDownScreen, setDrillDownScreen] = useState(null);
-  const [selectedTable, setSelectedTable] = useState(null);
+  const [drillDownData, setDrillDownData] = useState(null);
   const notificationSheetRef = useRef(null);
   const drillDownOpacity = useRef(new Animated.Value(0)).current;
 
@@ -154,8 +154,51 @@ function AppContent() {
     return () => subscription.remove();
   }, []);
 
-  // Notification data
-  const hasNotifications = currentRole === 'mentor' && MockData.mentorNotifications.length > 0;
+  // Streak (mentee) and badge/notification counts loaded from API
+  const [streak, setStreak] = useState(null);
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
+  const [notifications, setNotifications] = useState([]);
+
+  useEffect(() => {
+    if (!loggedInAccount) return;
+    const loadHeaderData = async () => {
+      try {
+        if (currentRole === 'mentee') {
+          const { items } = await SadhanaService.listSadhanaEntries(loggedInAccount.id, { limit: 60 });
+          if (items?.length) {
+            // Compute streak: consecutive days with entries up to today
+            const dates = new Set(items.map(e => e.date));
+            let count = 0;
+            const today = new Date();
+            for (let i = 0; i < 60; i++) {
+              const d = new Date(today);
+              d.setDate(d.getDate() - i);
+              const key = d.toISOString().split('T')[0];
+              if (dates.has(key)) count++;
+              else break;
+            }
+            setStreak(count);
+          }
+        } else if (currentRole === 'mentor') {
+          const approvals = await CourseService.listPendingApprovals();
+          setPendingApprovalCount(approvals?.length || 0);
+          // Build lightweight notifications from pending approvals
+          setNotifications(
+            (approvals || []).slice(0, 10).map(a => ({
+              menteeName: a.users ? `${a.users.firstName} ${a.users.lastName}`.trim() : 'Devotee',
+              date: a.submittedAt ? new Date(a.submittedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '',
+              note: `Submitted: ${a.courses?.title || 'a course'}`,
+              score: null,
+              mood: null,
+            }))
+          );
+        }
+      } catch (e) { console.error('[App header load]', e); }
+    };
+    loadHeaderData();
+  }, [loggedInAccount, currentRole]);
+
+  const hasNotifications = currentRole === 'mentor' && pendingApprovalCount > 0;
 
   const handleNotificationPress = useCallback(() => {
     if (hasNotifications) {
@@ -213,12 +256,11 @@ function AppContent() {
 
   // Get user data for header
   const userName = loggedInAccount.firstName;
-  const streak = currentRole === 'mentee' ? MockData.progressStats.streak : null;
   const isDualRole = loggedInAccount.roles.length > 1;
 
-  // Badge counts (simplified)
+  // Badge counts driven by API state
   const badgeCounts = currentRole === 'mentor'
-    ? { approvals: MockData.mentorDashboard.pendingActions }
+    ? { approvals: pendingApprovalCount || undefined }
     : {};
 
   // Handle logout
@@ -227,6 +269,9 @@ function AppContent() {
     setCurrentRole('mentee');
     setCurrentTab('today');
     setDrillDownScreen(null);
+    setStreak(null);
+    setPendingApprovalCount(0);
+    setNotifications([]);
   };
 
   // Handle role switch
@@ -245,12 +290,13 @@ function AppContent() {
 
   // Handle navigation to drill-down screens
   const handleNavigate = (screen, data) => {
-    if (screen === 'dataEditor') setSelectedTable(data);
+    setDrillDownData(data || null);
     setDrillDownScreen(screen);
   };
 
   const handleBack = () => {
     setDrillDownScreen(null);
+    setDrillDownData(null);
   };
 
   // Render all tab screens simultaneously (hidden/shown via animated opacity)
@@ -259,19 +305,16 @@ function AppContent() {
       let drillDownContent;
       switch (drillDownScreen) {
         case 'batchDetail':
-          drillDownContent = <BatchDetailScreen onBack={handleBack} onNavigate={handleNavigate} />;
+          drillDownContent = <BatchDetailScreen batchId={drillDownData?.batchId} account={loggedInAccount} onBack={handleBack} onNavigate={handleNavigate} />;
           break;
         case 'menteeDetail':
-          drillDownContent = <MenteeDetailScreen onBack={handleBack} />;
+          drillDownContent = <MenteeDetailScreen menteeId={drillDownData?.menteeId} account={loggedInAccount} onBack={handleBack} />;
           break;
         case 'adminUserDetail':
-          drillDownContent = <AdminUserDetailScreen onBack={handleBack} />;
+          drillDownContent = <AdminUserDetailScreen userId={drillDownData?.userId} account={loggedInAccount} onBack={handleBack} />;
           break;
         case 'auditLog':
           drillDownContent = <AuditLogScreen onBack={handleBack} />;
-          break;
-        case 'dataEditor':
-          drillDownContent = <DataEditorScreen onBack={handleBack} tableName={selectedTable} />;
           break;
         default:
           setDrillDownScreen(null);
@@ -354,19 +397,17 @@ function AppContent() {
         </SafeAreaView>
       </View>
 
-      {/* Notification Sheet */}
+      {/* Notification Sheet — pending course approvals */}
       <BottomSheet ref={notificationSheetRef} snapPoints={['50%']} title="Notifications">
         <ScrollView>
-          {MockData.mentorNotifications.map((notif, index) => (
+          {notifications.length === 0 && (
+            <Text style={[{ textAlign: 'center', padding: 24, color: colors.text.secondary }]}>No pending notifications</Text>
+          )}
+          {notifications.map((notif, index) => (
             <View key={index} style={[notifStyles.card, { backgroundColor: colors.background, borderColor: colors.border }]}>
               <View style={notifStyles.header}>
                 <Text style={[notifStyles.name, { color: colors.text.primary }]}>{notif.menteeName}</Text>
                 <Text style={[notifStyles.date, { color: colors.text.secondary }]}>{notif.date}</Text>
-              </View>
-              <View style={notifStyles.meta}>
-                <Text style={[notifStyles.metaText, { color: colors.text.secondary }]}>Score: {notif.score}</Text>
-                <Text style={[notifStyles.metaText, { color: colors.text.secondary }]}> · </Text>
-                <Text style={[notifStyles.metaText, { color: colors.text.secondary, textTransform: 'capitalize' }]}>{notif.mood}</Text>
               </View>
               <Text style={[notifStyles.note, { color: colors.text.primary }]}>{notif.note}</Text>
             </View>

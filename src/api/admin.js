@@ -17,7 +17,7 @@ export const getAuditLog = async ({ type, limit = 30, offset = 0 } = {}) => {
 
   let query = getClient()
     .from('audit_log')
-    .select('*')
+    .select('*, actor:users!audit_log_actor_id_fkey(first_name, last_name)')
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 

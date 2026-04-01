@@ -69,7 +69,7 @@ export const AdminDashboardScreen = ({ account }) => {
         ]);
         if (kpiRes) setKpis(Array.isArray(kpiRes) ? kpiRes : MockData.adminKPIs);
         if (pendingRes?.length) setPendingApps(pendingRes);
-      } catch { /* fallback */ }
+      } catch (e) { console.error('[AdminDashboard load]', e); /* fallback */ }
     };
     load();
   }, []);
@@ -87,7 +87,11 @@ export const AdminDashboardScreen = ({ account }) => {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Approve',
-          onPress: () => {
+          onPress: async () => {
+            try {
+              await UserService.updateUserStatus(app.id, 'ACTIVE');
+              await UserService.updateUserRoles(app.id, [...(app.roles || []), 'mentor'].filter((r, i, a) => a.indexOf(r) === i));
+            } catch (e) { console.error('[approveApp]', e); /* proceed with UI update */ }
             setPendingApps(prev => prev.filter(a => a.email !== app.email));
             showToast?.(`${app.name} approved as mentor`, 'success');
           },
@@ -105,7 +109,10 @@ export const AdminDashboardScreen = ({ account }) => {
         {
           text: 'Reject',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
+            try {
+              await UserService.updateUserStatus(app.id, 'INACTIVE');
+            } catch (e) { console.error('[rejectApp]', e); /* proceed with UI update */ }
             setPendingApps(prev => prev.filter(a => a.email !== app.email));
             showToast?.('Application rejected', 'success');
           },
@@ -281,7 +288,7 @@ export const UsersScreen = ({ account, onNavigate }) => {
       try {
         const { items } = await UserService.listAllUsers();
         if (items?.length) setAllUsers(items);
-      } catch { /* fallback */ }
+      } catch (e) { console.error('[UserManagement load]', e); /* fallback */ }
     };
     load();
   }, []);
@@ -359,7 +366,7 @@ export const UsersScreen = ({ account, onNavigate }) => {
 
       {/* User List */}
       {paginatedUsers.map((user, index) => (
-        <TouchableOpacity key={index} style={[styles.userRow, { borderBottomColor: colors.border }]} onPress={() => onNavigate?.('adminUserDetail')}>
+        <TouchableOpacity key={index} style={[styles.userRow, { borderBottomColor: colors.border }]} onPress={() => onNavigate?.('adminUserDetail', { userId: user.id })}>
           <View style={styles.userLeft}>
             <View style={[styles.avatar, { backgroundColor: user.status === 'pending' ? colors.primaryPressed : colors.accent.peach }]}>
               <Text style={[styles.avatarText, { color: colors.surface }]}>{user.name[0]}</Text>
@@ -402,13 +409,29 @@ export const UsersScreen = ({ account, onNavigate }) => {
 // Admin User Detail Screen — reuses MenteeDetailScreen
 // ═══════════════════════════════════════════════════════════
 
-export const AdminUserDetailScreen = ({ account, onBack }) => {
+export const AdminUserDetailScreen = ({ userId, account, onBack }) => {
   const { colors } = useTheme();
   const showToast = useToast();
   const reassignSheetRef = useRef(null);
-  const [userRoles, setUserRoles] = useState(MockData.adminUsers[0].roles);
+  const [userRoles, setUserRoles] = useState([]);
+  const [currentBatchId, setCurrentBatchId] = useState(null);
+  const [allBatches, setAllBatches] = useState([]);
   const isAdmin = userRoles.includes('admin');
   const isMentee = userRoles.includes('mentee');
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [profileRes, batchesRes] = await Promise.all([
+          userId ? UserService.getUserProfile(userId) : Promise.resolve(null),
+          BatchService.listAllBatches(),
+        ]);
+        if (profileRes?.roles) setUserRoles(profileRes.roles);
+        if (batchesRes?.length) setAllBatches(batchesRes);
+      } catch (e) { console.error('[UserDetail load]', e); /* fallback to MockData */ }
+    };
+    load();
+  }, [userId]);
 
   const handleRemoveUser = () => {
     Alert.alert(
@@ -419,7 +442,10 @@ export const AdminUserDetailScreen = ({ account, onBack }) => {
         {
           text: 'Remove',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
+            try {
+              await UserService.updateUserStatus(userId, 'INACTIVE');
+            } catch (e) { console.error('[removeUser]', e); /* proceed with UI update anyway */ }
             showToast?.('User removed', 'success');
             onBack();
           },
@@ -437,8 +463,12 @@ export const AdminUserDetailScreen = ({ account, onBack }) => {
         {
           text: 'Remove',
           style: 'destructive',
-          onPress: () => {
-            setUserRoles(prev => prev.filter(r => r !== 'admin'));
+          onPress: async () => {
+            const newRoles = userRoles.filter(r => r !== 'admin');
+            try {
+              await UserService.updateUserRoles(userId, newRoles);
+            } catch (e) { console.error('[demoteFromAdmin]', e); /* proceed with UI update anyway */ }
+            setUserRoles(newRoles);
             showToast?.('Admin role removed', 'success');
           },
         },
@@ -449,12 +479,16 @@ export const AdminUserDetailScreen = ({ account, onBack }) => {
   const handleReassign = (batch) => {
     Alert.alert(
       'Reassign Batch',
-      `Reassign this user to "${batch.name}" (Mentor: ${batch.mentor})?`,
+      `Reassign this user to "${batch.name}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Reassign',
-          onPress: () => {
+          onPress: async () => {
+            try {
+              await BatchService.reassignMember(userId, currentBatchId, batch.id);
+              setCurrentBatchId(batch.id);
+            } catch (e) { console.error('[reassignBatch]', e); /* proceed with UI update anyway */ }
             reassignSheetRef.current?.dismiss();
             showToast?.(`Reassigned to ${batch.name}`, 'success');
           },
@@ -480,11 +514,11 @@ export const AdminUserDetailScreen = ({ account, onBack }) => {
 
   return (
     <>
-      <MenteeDetailScreen onBack={onBack} onRemoveUser={handleRemoveUser} headerExtra={headerExtra} />
+      <MenteeDetailScreen menteeId={userId} account={account} onBack={onBack} onRemoveUser={handleRemoveUser} headerExtra={headerExtra} />
       <BottomSheet ref={reassignSheetRef} snapPoints={['50%']} title="Reassign to Batch">
         <ScrollView>
           <Text style={[typography.caption, { color: colors.text.secondary, marginBottom: spacing.md }]}>Select a batch to reassign this user:</Text>
-          {(MockData.adminBatchOptions || []).map(batch => (
+          {allBatches.map(batch => (
             <TouchableOpacity
               key={batch.id}
               style={[styles.reassignRow, { borderBottomColor: colors.border }]}
@@ -492,7 +526,7 @@ export const AdminUserDetailScreen = ({ account, onBack }) => {
             >
               <View>
                 <Text style={[typography.body, { color: colors.text.primary, fontWeight: '600' }]}>{batch.name}</Text>
-                <Text style={[typography.caption, { color: colors.text.secondary }]}>Mentor: {batch.mentor}</Text>
+                <Text style={[typography.caption, { color: colors.text.secondary }]}>Mentor: {batch.mentor || batch.mentorName}</Text>
               </View>
               <CaretRight size={18} color={colors.text.secondary} />
             </TouchableOpacity>
@@ -521,7 +555,7 @@ export const BatchOversightScreen = ({ account }) => {
       try {
         const res = await BatchService.listAllBatches();
         if (res?.length) setAllBatches(res);
-      } catch { /* fallback */ }
+      } catch (e) { console.error('[BatchOversight load]', e); /* fallback */ }
     };
     load();
   }, []);
@@ -533,10 +567,30 @@ export const BatchOversightScreen = ({ account }) => {
     return false;
   });
 
+  const showToast = useToast();
+
   const openBatchApproval = (batch) => {
     setSelectedBatch(batch);
     setAdminNote('');
     batchApprovalRef.current?.present();
+  };
+
+  const handleBatchApprove = async () => {
+    try {
+      await BatchService.updateBatchStatus(selectedBatch.id, 'active');
+      setAllBatches(prev => prev.map(b => b.id === selectedBatch.id ? { ...b, status: 'active' } : b));
+    } catch (e) { console.error('[approveBatch]', e); showToast?.('Failed to approve batch', 'error'); return; }
+    batchApprovalRef.current?.dismiss();
+    showToast?.('Batch approved', 'success');
+  };
+
+  const handleBatchReject = async () => {
+    try {
+      await BatchService.updateBatchStatus(selectedBatch.id, 'inactive');
+      setAllBatches(prev => prev.map(b => b.id === selectedBatch.id ? { ...b, status: 'inactive' } : b));
+    } catch (e) { console.error('[rejectBatch]', e); showToast?.('Failed to reject batch', 'error'); return; }
+    batchApprovalRef.current?.dismiss();
+    showToast?.('Batch rejected', 'success');
   };
 
   return (
@@ -614,10 +668,10 @@ export const BatchOversightScreen = ({ account }) => {
             placeholderTextColor={colors.text.secondary}
           />
           <View style={styles.sheetButtonRow}>
-            <Button variant="success" style={styles.sheetBtn} onPress={() => batchApprovalRef.current?.dismiss()}>
+            <Button variant="success" style={styles.sheetBtn} onPress={handleBatchApprove}>
               Approve
             </Button>
-            <Button variant="destructive" style={styles.sheetBtn} onPress={() => batchApprovalRef.current?.dismiss()}>
+            <Button variant="destructive" style={styles.sheetBtn} onPress={handleBatchReject}>
               Reject
             </Button>
           </View>
@@ -658,18 +712,37 @@ export const SettingsScreen = ({ account, onLogout, onNavigate }) => {
       try {
         const res = await AdminService.getScoringConfig();
         if (res) setScoringConfig(res);
-      } catch { /* fallback */ }
+      } catch (e) { console.error('[SettingsScreen load]', e); /* fallback */ }
     };
     load();
   }, []);
+
+  // Normalize items from either source to { id?, name, active } shape the UI expects
+  // Also deduplicates by lowercased name to handle over-seeded DB rows
+  const normalizeItems = (items) => {
+    const seen = new Set();
+    return items
+      .map(i => ({
+        id: i.id,
+        name: i.name || i.label,
+        active: i.active !== undefined ? i.active : (i.isActive !== undefined ? i.isActive : true),
+      }))
+      .filter(i => {
+        const k = (i.name || '').toLowerCase().trim();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+  };
 
   const openSettingsList = async (key) => {
     setSelectedSettingKey(key);
     try {
       const items = await AdminService.listReferenceItems(key);
-      setSettingsList(items?.length ? items : [...(MockData.adminSettingsLists[key] || [])]);
-    } catch {
-      setSettingsList([...(MockData.adminSettingsLists[key] || [])]);
+      setSettingsList(items?.length ? normalizeItems(items) : normalizeItems(MockData.adminSettingsLists[key] || []));
+    } catch (e) {
+      console.error('[openSettingsList]', e);
+      setSettingsList(normalizeItems(MockData.adminSettingsLists[key] || []));
     }
     setNewItemText('');
     settingsSheetRef.current?.present();
@@ -685,8 +758,13 @@ export const SettingsScreen = ({ account, onLogout, onNavigate }) => {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Add',
-          onPress: () => {
-            setSettingsList(prev => [{ name: trimmed, active: true }, ...prev]);
+          onPress: async () => {
+            let newItem = { name: trimmed, active: true };
+            try {
+              const added = await AdminService.upsertReferenceItem({ category: selectedSettingKey, label: trimmed, isActive: true });
+              if (added) newItem = { ...newItem, id: added.id };
+            } catch (e) { console.error('[addSettingsItem]', e); /* add to UI anyway */ }
+            setSettingsList(prev => [newItem, ...prev]);
             setNewItemText('');
             showToast?.(`Added "${trimmed}"`, 'success');
           },
@@ -695,10 +773,16 @@ export const SettingsScreen = ({ account, onLogout, onNavigate }) => {
     );
   };
 
-  const handleToggleItem = (itemName) => {
+  const handleToggleItem = async (itemName) => {
+    const item = settingsList.find(i => i.name === itemName || i.label === itemName);
     setSettingsList(prev => prev.map(i =>
-      i.name === itemName ? { ...i, active: !i.active } : i
+      (i.name === itemName || i.label === itemName) ? { ...i, active: !i.active } : i
     ));
+    if (item?.id) {
+      try {
+        await AdminService.upsertReferenceItem({ id: item.id, category: selectedSettingKey, label: item.name || item.label, isActive: !item.active });
+      } catch (e) { console.error('[toggleSettingsItem]', e); /* local state already updated */ }
+    }
   };
 
   return (
@@ -731,21 +815,6 @@ export const SettingsScreen = ({ account, onLogout, onNavigate }) => {
             <Text style={[styles.settingsText, { color: colors.text.primary }]}>Sadhana Scoring</Text>
             <CaretRight size={20} color={colors.text.secondary} />
           </TouchableOpacity>
-        </Card>
-
-        {/* Data Manager */}
-        <Card variant="form" style={styles.settingsCard}>
-          <Text style={[styles.sectionTitle, { color: colors.text.primary, marginBottom: spacing.sm }]}>Data Manager</Text>
-          {MockData.adminTableNames.map((tableName, idx) => (
-            <TouchableOpacity
-              key={tableName}
-              style={[styles.settingsRow, idx === MockData.adminTableNames.length - 1 && styles.settingsRowLast, { borderBottomColor: colors.border }]}
-              onPress={() => onNavigate?.('dataEditor', tableName)}
-            >
-              <Text style={[styles.settingsText, { color: colors.text.primary }]}>{tableName}</Text>
-              <CaretRight size={20} color={colors.text.secondary} />
-            </TouchableOpacity>
-          ))}
         </Card>
 
         <Card variant="form" style={styles.settingsCard}>
@@ -862,7 +931,11 @@ export const SettingsScreen = ({ account, onLogout, onNavigate }) => {
             <StepperControl value={scoringConfig.bookReadingTargetMinutes} onValueChange={(v) => setScoringConfig(prev => ({ ...prev, bookReadingTargetMinutes: v }))} min={5} max={120} step={5} />
             <Text style={{ ...typography.caption, color: colors.text.secondary, width: 36, textAlign: 'right' }}>{scoringConfig.bookReadingTargetMinutes}m</Text>
           </View>
-          <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={() => {
+          <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={async () => {
+            if (scoringTotal !== 100) return showToast?.('Weights must total 100%', 'error');
+            try {
+              await AdminService.updateScoringConfig(scoringConfig);
+            } catch (e) { console.error('[updateScoringConfig]', e); showToast?.('Failed to save configuration', 'error'); return; }
             showToast?.('Scoring configuration saved', 'success');
             scoringSheetRef.current?.dismiss();
           }}>
@@ -876,10 +949,10 @@ export const SettingsScreen = ({ account, onLogout, onNavigate }) => {
 };
 
 // ═══════════════════════════════════════════════════════════
-// Data Editor Screen
+// (Data Editor Screen removed)
 // ═══════════════════════════════════════════════════════════
 
-export const DataEditorScreen = ({ onBack, tableName }) => {
+const DataEditorScreen = ({ onBack, tableName }) => {
   const { colors } = useTheme();
   const showToast = useToast();
   const editSheetRef = useRef(null);
@@ -1060,8 +1133,21 @@ export const AuditLogScreen = ({ account, onBack }) => {
     const load = async () => {
       try {
         const { items } = await AdminService.getAuditLog();
-        if (items?.length) setAuditLog(items);
-      } catch { /* fallback */ }
+        if (items?.length) {
+          const normalized = items.map(e => {
+            const actorName = e.actor
+              ? `${e.actor.firstName || ''} ${e.actor.lastName || ''}`.trim()
+              : e.actorId?.slice(0, 8) || 'System';
+            const targetType = (e.targetType || 'system').toLowerCase();
+            const actionLabel = (e.action || '').toLowerCase().replace(/_/g, ' ');
+            const target = e.details?.note || (e.targetId ? `${targetType} ${e.targetId.slice(0, 6)}` : targetType);
+            const d = new Date(e.createdAt);
+            const date = isNaN(d) ? '' : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+            return { id: e.id, type: targetType, actor: actorName, action: actionLabel, target, date };
+          });
+          setAuditLog(normalized);
+        }
+      } catch (e) { console.error('[AuditLog load]', e); /* fallback to MockData */ }
     };
     load();
   }, []);

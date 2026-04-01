@@ -77,18 +77,28 @@ const PROGRAMME_ICONS = {
   Waveform,
 };
 
+// Map reference_items labels → icon component names (icons must stay in code)
+const MP_ICON_MAP = {
+  'Mangala Arati': 'Fire',
+  'Japa Meditation': 'ListBullets',
+  'Guru Puja': 'MusicNotes',
+  'Bhagavatam Class': 'BookOpenText',
+  'Tulasi Puja': 'Leaf',
+  'Evening Kirtana': 'Waveform',
+};
+
 // ═══════════════════════════════════════════════════════════
 // Sadhana Scoring Function
 // ═══════════════════════════════════════════════════════════
 
 const calculateScore = (config, { japaRounds, japaTarget, morningProgramme, bookEntries, mood, hasSevaToday }) => {
-  const roundsScore = Math.min(japaRounds / (japaTarget || 16), 1) * config.roundsWeight;
+  const roundsScore = Math.min(japaRounds / (japaTarget || config.japaTarget || 16), 1) * config.roundsWeight;
   const mpDone = morningProgramme.filter(Boolean).length;
   const mpScore = (mpDone / (morningProgramme.length || 1)) * config.morningProgrammeWeight;
   const totalBookMin = bookEntries.reduce((sum, e) => sum + (e.duration || 0), 0);
   const bookScore = Math.min(totalBookMin / (config.bookReadingTargetMinutes || 30), 1) * config.bookReadingWeight;
-  const moodMap = { struggling: 0.25, steady: 0.5, inspired: 0.75, blissful: 1.0 };
-  const moodScore = (moodMap[mood] || 0.5) * config.moodWeight;
+  const moodKey = `moodMultiplier${mood ? mood.charAt(0).toUpperCase() + mood.slice(1) : 'Steady'}`;
+  const moodScore = (config[moodKey] ?? 0.5) * config.moodWeight;
   const sevaScore = hasSevaToday ? config.sevaWeight : 0;
   return Math.round(roundsScore + mpScore + bookScore + moodScore + sevaScore);
 };
@@ -106,31 +116,51 @@ export const TodayScreen = ({ account, sadhanaData, sevaLogs: sevaLogsProp } = {
   const [allBooks, setAllBooks] = useState(MockData.books);
   const [scoringConfig, setScoringConfig] = useState(MockData.sadhanaScoring);
   const [sevaLogsData, setSevaLogsData] = useState(sevaLogsProp || []);
+  const [morningProgrammeItems, setMorningProgrammeItems] = useState(sadhana.morningProgramme);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [booksRes, scoringRes, sevaRes] = await Promise.all([
+        const [booksRes, scoringRes, sevaRes, mpRes] = await Promise.all([
           BookService.listBooks(),
           AdminService.getScoringConfig(),
           SevaService.listSevaLogs(account?.id, { limit: 5 }),
+          AdminService.listReferenceItems('Morning Programme'),
         ]);
         setAllBooks(booksRes);
         setScoringConfig(scoringRes);
         setSevaLogsData(sevaRes.items || sevaRes);
-      } catch { /* fallback to initial state */ }
+        if (mpRes?.length) {
+          const seen = new Set();
+          const items = mpRes
+            .filter(item => item.isActive !== false)
+            .filter(item => {
+              const key = (item.label || '').toLowerCase().trim();
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            })
+            .map(item => ({
+              id: item.id || item.label.toLowerCase().replace(/\s+/g, '_'),
+              label: item.label,
+              icon: MP_ICON_MAP[item.label] || MP_ICON_MAP[item.label?.replace('Aarti', 'Arati')] || 'ListBullets',
+              defaultOn: false,
+            }));
+          setMorningProgrammeItems(items);
+        }
+      } catch (e) { console.error('[TodayScreen load]', e); /* fallback to initial state */ }
     };
     load();
   }, [account?.id]);
 
-  const [japaRounds, setJapaRounds] = useState(sadhana.japaDefault);
+  const [japaRounds, setJapaRounds] = useState(scoringConfig.japaTarget || 16);
   const [morningProgramme, setMorningProgramme] = useState(
-    sadhana.morningProgramme.map(item => item.defaultOn)
+    morningProgrammeItems.map(item => item.defaultOn)
   );
   const [mood, setMood] = useState(sadhana.defaultMood.toLowerCase());
   const [notes, setNotes] = useState('');
   const [submitted, setSubmitted] = useState(false);
-  const [bookEntries, setBookEntries] = useState([{ book: allBooks[0]?.title || 'Select a book', duration: 30 }]);
+  const [bookEntries, setBookEntries] = useState([{ book: allBooks[0]?.title || 'Select a book', duration: scoringConfig.bookReadingTargetMinutes || 30 }]);
   const [bannerVisible, setBannerVisible] = useState(true);
   const [preFilled, setPreFilled] = useState(false);
   const bannerHeight = useRef(new Animated.Value(60)).current;
@@ -145,10 +175,10 @@ export const TodayScreen = ({ account, sadhanaData, sevaLogs: sevaLogsProp } = {
   const [computedScore, setComputedScore] = useState(0);
 
   const handleSameAsYesterday = () => {
-    setJapaRounds(sadhana.japaDefault);
-    setMorningProgramme([false, true, true, false, false, false]);
+    setJapaRounds(scoringConfig.japaTarget || 16);
+    setMorningProgramme(morningProgrammeItems.map(i => i.defaultOn));
     setMood('steady');
-    setBookEntries([{ book: allBooks[0]?.title || 'Select a book', duration: 30 }]);
+    setBookEntries([{ book: allBooks[0]?.title || 'Select a book', duration: scoringConfig.bookReadingTargetMinutes || 30 }]);
     setPreFilled(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     showToast?.('Pre-filled from yesterday', 'success');
@@ -165,16 +195,40 @@ export const TodayScreen = ({ account, sadhanaData, sevaLogs: sevaLogsProp } = {
     Haptics.selectionAsync();
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const score = calculateScore(scoringConfig, {
       japaRounds,
-      japaTarget: sadhana.japaTarget,
+      japaTarget: scoringConfig.japaTarget || 16,
       morningProgramme,
       bookEntries,
       mood,
       hasSevaToday: sevaLogsData.some(l => l.date === 'today'),
     });
     setComputedScore(score);
+
+    // Build morning programme map keyed by item id
+    const mpMap = {};
+    morningProgrammeItems.forEach((item, i) => {
+      mpMap[item.id] = morningProgramme[i] ?? false;
+    });
+
+    try {
+      await SadhanaService.createSadhanaEntry({
+        userId: account?.id,
+        date: new Date().toISOString().slice(0, 10),
+        japaRounds,
+        mangalaArati: mpMap['mangala'] ?? mpMap['mangala_arati'] ?? false,
+        morningProgram: mpMap['japa'] ?? mpMap['japa_meditation'] ?? false,
+        guruPuja: mpMap['guru'] ?? mpMap['guru_puja'] ?? false,
+        sbClass: mpMap['bhagavatam'] ?? mpMap['bhagavatam_class'] ?? false,
+        tulasiPuja: mpMap['tulasi'] ?? mpMap['tulasi_puja'] ?? false,
+        readingMinutes: bookEntries.reduce((s, e) => s + (e.duration || 0), 0),
+        mood,
+        notes,
+        totalScore: score,
+      });
+    } catch (e) { console.error('[submitSadhana]', e); /* UI already shows success, fail silently */ }
+
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     showToast?.('Sadhana submitted successfully', 'success');
     Animated.timing(formOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
@@ -194,7 +248,7 @@ export const TodayScreen = ({ account, sadhanaData, sevaLogs: sevaLogsProp } = {
   };
 
   const addBookEntry = () => {
-    setBookEntries([...bookEntries, { book: allBooks[0]?.title || 'Select a book', duration: 30 }]);
+    setBookEntries([...bookEntries, { book: allBooks[0]?.title || 'Select a book', duration: scoringConfig.bookReadingTargetMinutes || 30 }]);
   };
 
   const removeBookEntry = (index) => {
@@ -208,7 +262,7 @@ export const TodayScreen = ({ account, sadhanaData, sevaLogs: sevaLogsProp } = {
   };
 
   // B4: Fire icon color — orange when target met
-  const japaTargetMet = japaRounds >= sadhana.japaTarget;
+  const japaTargetMet = japaRounds >= (scoringConfig.japaTarget || 16);
 
   if (submitted) {
     return (
@@ -295,17 +349,17 @@ export const TodayScreen = ({ account, sadhanaData, sevaLogs: sevaLogsProp } = {
               min={0}
               max={192}
             />
-            <Text style={[styles.targetText, { color: colors.text.secondary }]}>Target: {sadhana.japaTarget} rounds</Text>
+            <Text style={[styles.targetText, { color: colors.text.secondary }]}>Target: {scoringConfig.japaTarget || 16} rounds</Text>
           </Card>
 
           {/* Morning Programme */}
           <Card variant="form">
             <Text style={[styles.cardTitle, { color: colors.text.primary }]}>Morning Programme</Text>
-            {sadhana.morningProgramme.map((item, index) => (
-              <View key={item.id} style={[
+            {morningProgrammeItems.map((item, index) => (
+              <View key={`mp-${item.id}-${index}`} style={[
                 styles.toggleRow,
                 { borderBottomColor: colors.border },
-                index === sadhana.morningProgramme.length - 1 && { borderBottomWidth: 0 }
+                index === morningProgrammeItems.length - 1 && { borderBottomWidth: 0 }
               ]}>
                 <View style={styles.toggleIcon}>
                   {PROGRAMME_ICONS[item.icon] && React.createElement(PROGRAMME_ICONS[item.icon], { size: 24, color: colors.text.primary })}
@@ -517,7 +571,7 @@ export const ProgressScreen = ({ account, progressStats: progressStatsProp, subm
           const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
           setProgressStats(prev => ({ ...prev, avgScore }));
         }
-      } catch { /* fallback to initial state */ }
+      } catch (e) { console.error('[ProgressScreen load]', e); /* fallback to initial state */ }
       setDataLoading(false);
     };
     load();
@@ -724,29 +778,43 @@ export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksP
   const [booksSource, setBooksSource] = useState(booksProp || MockData.books);
   const collectionsSource = bookCollectionsProp || MockData.bookCollections;
   const [coursesSource, setCoursesSource] = useState(coursesProp || MockData.courses);
+  const [courseCompletions, setCourseCompletions] = useState([]);
+  const isItemActive = (item) => item.isActive !== false && item.active !== false;
   const [courseOptions, setCourseOptions] = useState(
-    (MockData.adminSettingsLists?.['Courses'] || []).filter(c => c.active).map(c => c.name)
+    (MockData.adminSettingsLists?.['Courses'] || []).filter(isItemActive).map(c => c.label || c.name)
   );
   const [serviceDepts, setServiceDepts] = useState(
-    (MockData.adminSettingsLists?.['Service Departments'] || []).filter(d => d.active)
+    (MockData.adminSettingsLists?.['Service Departments'] || []).filter(isItemActive).map(d => ({ ...d, name: d.label || d.name }))
   );
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [sevaRes, booksRes, coursesRes, courseRefsRes, deptRefsRes] = await Promise.all([
+        const [sevaRes, booksRes, coursesRes, courseRefsRes, deptRefsRes, completionsRes] = await Promise.all([
           SevaService.listSevaLogs(account?.id),
           BookService.listBooks(),
           CourseService.listCourses(),
           AdminService.listReferenceItems('Courses'),
           AdminService.listReferenceItems('Service Departments'),
+          CourseService.listCourseCompletions(account?.id),
         ]);
         setSevaLogsForDisplay(sevaRes.items || sevaRes);
         setBooksSource(booksRes);
         setCoursesSource(coursesRes);
-        setCourseOptions(courseRefsRes.filter(c => c.active).map(c => c.name));
-        setServiceDepts(deptRefsRes.filter(d => d.active));
-      } catch { /* fallback to initial state */ }
+        const isActive = (item) => item.isActive !== false && item.active !== false;
+        const dedupe = (items) => {
+          const seen = new Set();
+          return items.filter(i => {
+            const k = (i.label || i.name || '').toLowerCase().trim();
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          });
+        };
+        setCourseOptions(dedupe(courseRefsRes.filter(isActive)).map(c => c.label || c.name));
+        setServiceDepts(dedupe(deptRefsRes.filter(isActive)).map(d => ({ ...d, name: d.label || d.name })));
+        if (completionsRes?.length) setCourseCompletions(completionsRes);
+      } catch (e) { console.error('[SevaBooksScreen load]', e); /* fallback to initial state */ }
     };
     load();
   }, [account?.id]);
@@ -776,43 +844,66 @@ export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksP
   // D3: Fade animation for sub-tab switching
   const contentOpacity = useRef(new Animated.Value(1)).current;
 
-  const toggleBookOwned = (index) => {
+  const toggleBookOwned = async (index) => {
     const newBooks = [...books];
     newBooks[index] = { ...newBooks[index], owned: !newBooks[index].owned };
     setBooks(newBooks);
+    try {
+      await BookService.upsertBookProgress({ userId: account?.id, bookId: newBooks[index].id, pagesRead: 0, completed: newBooks[index].status === 'completed' });
+    } catch (e) { console.error('[toggleBookOwned]', e); /* local state already updated */ }
   };
 
-  const cycleBookStatus = (index) => {
+  const cycleBookStatus = async (index) => {
     const newBooks = [...books];
     const statuses = ['not-started', 'reading', 'completed'];
     const currentIndex = statuses.indexOf(newBooks[index].status);
     newBooks[index] = { ...newBooks[index], status: statuses[(currentIndex + 1) % 3] };
     setBooks(newBooks);
+    try {
+      await BookService.upsertBookProgress({ userId: account?.id, bookId: newBooks[index].id, pagesRead: 0, completed: newBooks[index].status === 'completed' });
+    } catch (e) { console.error('[cycleBookStatus]', e); /* local state already updated */ }
   };
 
   const toggleCollection = (name) => {
     setExpandedCollections(prev => ({ ...prev, [name]: !prev[name] }));
   };
 
-  const toggleVolumeOwned = (collectionName, volumeIdx) => {
-    setCollections(prev => prev.map(c =>
-      c.name === collectionName
-        ? { ...c, volumes: c.volumes.map((v, i) => i === volumeIdx ? { ...v, owned: !v.owned } : v) }
-        : c
-    ));
+  const toggleVolumeOwned = async (collectionName, volumeIdx) => {
+    let updatedVolume = null;
+    setCollections(prev => prev.map(c => {
+      if (c.name !== collectionName) return c;
+      const volumes = c.volumes.map((v, i) => {
+        if (i !== volumeIdx) return v;
+        updatedVolume = { ...v, owned: !v.owned };
+        return updatedVolume;
+      });
+      return { ...c, volumes };
+    }));
+    if (updatedVolume?.id) {
+      try {
+        await BookService.upsertBookProgress({ userId: account?.id, bookId: updatedVolume.id, pagesRead: 0, completed: updatedVolume.status === 'completed' });
+      } catch (e) { console.error('[toggleVolumeOwned]', e); /* local state already updated */ }
+    }
   };
 
-  const cycleVolumeStatus = (collectionName, volumeIdx) => {
+  const cycleVolumeStatus = async (collectionName, volumeIdx) => {
     const statuses = ['not-started', 'reading', 'completed'];
-    setCollections(prev => prev.map(c =>
-      c.name === collectionName
-        ? { ...c, volumes: c.volumes.map((v, i) => {
-            if (i !== volumeIdx) return v;
-            const cur = statuses.indexOf(v.status);
-            return { ...v, status: statuses[(cur + 1) % 3] };
-          }) }
-        : c
-    ));
+    let updatedVolume = null;
+    setCollections(prev => prev.map(c => {
+      if (c.name !== collectionName) return c;
+      const volumes = c.volumes.map((v, i) => {
+        if (i !== volumeIdx) return v;
+        const cur = statuses.indexOf(v.status);
+        updatedVolume = { ...v, status: statuses[(cur + 1) % 3] };
+        return updatedVolume;
+      });
+      return { ...c, volumes };
+    }));
+    if (updatedVolume?.id) {
+      try {
+        await BookService.upsertBookProgress({ userId: account?.id, bookId: updatedVolume.id, pagesRead: 0, completed: updatedVolume.status === 'completed' });
+      } catch (e) { console.error('[cycleVolumeStatus]', e); /* local state already updated */ }
+    }
   };
 
   const filteredBooks = books
@@ -873,18 +964,23 @@ export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksP
               <Button variant="secondary" onPress={openSevaLog} style={styles.actionButton}>
                 + Log Seva
               </Button>
-              {sevaLogsForDisplay.map((log, index) => (
-                <Card key={index} variant="form" style={styles.sevaCard}>
-                  <View style={styles.sevaHeader}>
-                    <Text style={[styles.sevaDate, { color: colors.text.primary }]}>{log.date}</Text>
-                    <Text style={[styles.sevaHours, { color: colors.text.primary }]}>{log.hours} hrs</Text>
-                  </View>
-                  <View style={[styles.departmentChip, { backgroundColor: colors.accent.peach }]}>
-                    <Text style={[styles.departmentText, { color: colors.primaryPressed }]}>{log.department.toUpperCase()}</Text>
-                  </View>
-                  <Text style={[styles.sevaDescription, { color: colors.text.secondary }]}>{log.description}</Text>
-                </Card>
-              ))}
+              {sevaLogsForDisplay.map((log, index) => {
+                const deptLabel = log.department || log.departmentName ||
+                  serviceDepts.find(d => d.id === log.departmentId)?.name || 'General';
+                const desc = log.description || log.notes || '';
+                return (
+                  <Card key={index} variant="form" style={styles.sevaCard}>
+                    <View style={styles.sevaHeader}>
+                      <Text style={[styles.sevaDate, { color: colors.text.primary }]}>{log.date}</Text>
+                      <Text style={[styles.sevaHours, { color: colors.text.primary }]}>{log.hours} hrs</Text>
+                    </View>
+                    <View style={[styles.departmentChip, { backgroundColor: colors.accent.peach }]}>
+                      <Text style={[styles.departmentText, { color: colors.primaryPressed }]}>{deptLabel.toUpperCase()}</Text>
+                    </View>
+                    {!!desc && <Text style={[styles.sevaDescription, { color: colors.text.secondary }]}>{desc}</Text>}
+                  </Card>
+                );
+              })}
             </>
           )}
 
@@ -903,7 +999,7 @@ export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksP
 
               {/* Standalone books */}
               {filteredBooks.map((book) => (
-                <View key={book.title} style={[styles.bookRow, { borderBottomColor: colors.border }]}>
+                <View key={book.id || book.title} style={[styles.bookRow, { borderBottomColor: colors.border }]}>
                   <View style={styles.bookInfo}>
                     <Text style={[styles.bookTitle, { color: colors.text.primary }]}>{book.title}</Text>
                     <TouchableOpacity
@@ -969,7 +1065,7 @@ export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksP
                       </Text>
                     </TouchableOpacity>
                     {isExpanded && volumesToShow.map((vol, vIdx) => (
-                      <View key={vol.title} style={[styles.bookRow, styles.volumeRow, { borderBottomColor: colors.border }]}>
+                      <View key={vol.id || vol.title || vIdx} style={[styles.bookRow, styles.volumeRow, { borderBottomColor: colors.border }]}>
                         <View style={styles.bookInfo}>
                           <Text style={[styles.bookTitle, { color: colors.text.primary }]}>{vol.title}</Text>
                           <TouchableOpacity
@@ -1012,19 +1108,31 @@ export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksP
               <Button variant="secondary" style={styles.actionButton} onPress={() => courseSheetRef.current?.present()}>
                 + Submit Course
               </Button>
-              {coursesSource.map((course, index) => (
-                <View key={index} style={[styles.courseRow, { borderBottomColor: colors.border }]}>
-                  <View>
-                    <Text style={[styles.courseName, { color: colors.text.primary }]}>{course.name}</Text>
-                    <Text style={[styles.courseDate, { color: colors.text.secondary }]}>Submitted: {course.submitted}</Text>
+              {courseCompletions.length === 0 && (
+                <Text style={[{ color: colors.text.secondary, textAlign: 'center', marginTop: spacing.xl }, typography.body]}>
+                  No courses submitted yet.
+                </Text>
+              )}
+              {courseCompletions.map((completion, index) => {
+                const title = completion.courseName || completion.courses?.title || completion.courseId || 'Unknown Course';
+                const submittedDate = completion.submittedAt
+                  ? new Date(completion.submittedAt).toLocaleDateString()
+                  : completion.submitted || '';
+                const isApproved = (completion.status || '').toUpperCase() === 'APPROVED';
+                return (
+                  <View key={completion.id || index} style={[styles.courseRow, { borderBottomColor: colors.border }]}>
+                    <View>
+                      <Text style={[styles.courseName, { color: colors.text.primary }]}>{title}</Text>
+                      <Text style={[styles.courseDate, { color: colors.text.secondary }]}>Submitted: {submittedDate}</Text>
+                    </View>
+                    {isApproved ? (
+                      <CheckCircle size={24} color={colors.status.success} weight="fill" />
+                    ) : (
+                      <Clock size={24} color={colors.status.warning} weight="fill" />
+                    )}
                   </View>
-                  {course.status === 'approved' ? (
-                    <CheckCircle size={24} color={colors.status.success} weight="fill" />
-                  ) : (
-                    <Clock size={24} color={colors.status.warning} weight="fill" />
-                  )}
-                </View>
-              ))}
+                );
+              })}
             </>
           )}
         </ScrollView>
@@ -1034,9 +1142,9 @@ export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksP
         <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Department</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deptScroll}>
-            {serviceDepts.map((dept) => (
+            {serviceDepts.map((dept, di) => (
               <TouchableOpacity
-                key={dept.name}
+                key={dept.id || `dept-${di}`}
                 style={[styles.deptChip, { backgroundColor: colors.surface, borderColor: colors.border }, sevaDept === dept.name && { backgroundColor: colors.accent.peach, borderColor: colors.primary }]}
                 onPress={() => setSevaDept(dept.name)}
               >
@@ -1062,7 +1170,29 @@ export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksP
           {/* D2: Date selector */}
           <Text style={[styles.sheetLabel, { marginTop: spacing.md, color: colors.text.secondary }]}>Date</Text>
           <DateSelector value={sevaDate} onChange={setSevaDate} />
-          <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={() => {
+          <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={async () => {
+            const dept = serviceDepts.find(d => d.name === sevaDept || d.label === sevaDept);
+            const dateStr = sevaDate instanceof Date ? sevaDate.toISOString().slice(0, 10) : sevaDate;
+            try {
+              await SevaService.createSevaLog({
+                userId: account?.id,
+                departmentId: dept?.id,
+                date: dateStr,
+                hours: sevaDuration,
+                notes: sevaDesc || '',
+              });
+            } catch (e) { console.error('[createSevaLog]', e); /* fail silently */ }
+            // Optimistically prepend to display list with normalised fields
+            setSevaLogsForDisplay(prev => [{
+              date: dateStr,
+              hours: sevaDuration,
+              department: sevaDept || 'General',
+              description: sevaDesc || '',
+              notes: sevaDesc || '',
+            }, ...prev]);
+            setSevaDept('');
+            setSevaDesc('');
+            setSevaDuration(1);
             showToast?.('Seva logged successfully', 'success');
             bottomSheetRef.current?.dismiss();
           }}>
@@ -1074,9 +1204,9 @@ export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksP
       <BottomSheet ref={courseSheetRef} snapPoints={['80%']} title="Submit Course">
         <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Course</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deptScroll}>
-          {courseOptions.map((opt) => (
+          {courseOptions.map((opt, oi) => (
             <TouchableOpacity
-              key={opt}
+              key={`course-opt-${oi}`}
               style={[styles.deptChip, { backgroundColor: colors.surface, borderColor: colors.border }, courseName === opt && !courseIsOther && { backgroundColor: colors.accent.peach, borderColor: colors.primary }]}
               onPress={() => { setCourseName(opt); setCourseIsOther(false); }}
             >
@@ -1118,7 +1248,26 @@ export const SevaBooksScreen = ({ account, sevaLogs: sevaLogsProp, books: booksP
           onChangeText={setCourseNotes}
           placeholderTextColor={colors.text.secondary}
         />
-        <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={() => {
+        <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={async () => {
+          if (!courseName) return showToast?.('Please select a course', 'error');
+          const course = coursesSource.find(c => c.title === courseName || c.name === courseName);
+          try {
+            await CourseService.submitCourseCompletion({
+              userId: account?.id,
+              courseId: course?.id,
+              notes: courseNotes,
+            });
+          } catch (e) { console.error('[submitCourseCompletion]', e); /* fail silently */ }
+          // Optimistically prepend to completions list
+          setCourseCompletions(prev => [{
+            id: Date.now().toString(),
+            courseName: courseName,
+            courses: { title: courseName },
+            submittedAt: new Date().toISOString(),
+            status: 'PENDING',
+          }, ...prev]);
+          setCourseName('');
+          setCourseNotes('');
           showToast?.('Course submitted for review', 'success');
           courseSheetRef.current?.dismiss();
         }}>
@@ -1138,7 +1287,7 @@ export const ProfileScreen = ({ account, onLogout }) => {
   const showToast = useToast();
   const [profile, setProfile] = useState(MockData.menteeProfile);
   const [spiritualMasters, setSpiritualMasters] = useState(
-    (MockData.adminSettingsLists?.['Spiritual Masters'] || []).filter(sm => sm.active).map(sm => sm.name)
+    (MockData.adminSettingsLists?.['Spiritual Masters'] || []).filter(sm => sm.active !== false).map(sm => sm.name)
   );
   const [profileLoading, setProfileLoading] = useState(false);
 
@@ -1165,8 +1314,8 @@ export const ProfileScreen = ({ account, onLogout }) => {
             mentor: profileRes.mentor || MockData.menteeProfile.mentor,
           });
         }
-        setSpiritualMasters(smRes.filter(sm => sm.active).map(sm => sm.name));
-      } catch { /* fallback to initial state */ }
+        setSpiritualMasters(smRes.filter(sm => sm.isActive !== false && sm.active !== false).map(sm => sm.label || sm.name));
+      } catch (e) { console.error('[MenteeProfileScreen load]', e); /* fallback to initial state */ }
       setProfileLoading(false);
     };
     load();
@@ -1182,6 +1331,19 @@ export const ProfileScreen = ({ account, onLogout }) => {
   const [editDob, setEditDob] = useState(profile.dob || '');
   const [editAddress, setEditAddress] = useState(profile.address || '');
   const [editInitiationYear, setEditInitiationYear] = useState(profile.initiationYear || '');
+
+  // Sync edit fields when real profile loads from API
+  useEffect(() => {
+    setEditName(profile.name || '');
+    setEditEmail(profile.email || '');
+    setEditPhone(profile.phone || '');
+    setEditJapaTarget(profile.japaTarget || 16);
+    setEditInitiatedName(profile.initiatedName || '');
+    setEditSpiritualMaster(profile.spiritualMaster || '');
+    setEditDob(profile.dob || '');
+    setEditAddress(profile.address || '');
+    setEditInitiationYear(profile.initiationYear || '');
+  }, [profile.email]);
   const [smPickerOpen, setSmPickerOpen] = useState(false);
 
   // Update edit fields when profile loads from API
@@ -1344,7 +1506,22 @@ export const ProfileScreen = ({ account, onLogout }) => {
           <TextInput style={[styles.sheetInput, { borderColor: colors.border, color: colors.text.primary, height: 64, textAlignVertical: 'top' }]} value={editAddress} onChangeText={setEditAddress} placeholder="Home address" placeholderTextColor={colors.text.secondary} multiline />
           <Text style={[styles.sheetLabel, { color: colors.text.secondary }]}>Date Joined</Text>
           <Text style={[styles.sheetDateText, { color: colors.text.primary }]}>{profile.dateJoined}</Text>
-          <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={() => {
+          <Button variant="primary" style={{ marginTop: spacing.xl }} onPress={async () => {
+            try {
+              await UserService.updateUserProfile(account?.id, {
+                firstName: editName.split(' ')[0],
+                lastName: editName.split(' ').slice(1).join(' ') || undefined,
+                email: editEmail,
+                phone: editPhone,
+                japaTarget: editJapaTarget,
+                initiatedName: editInitiatedName,
+                initiationYear: editInitiationYear ? Number(editInitiationYear) : undefined,
+                spiritualMaster: editSpiritualMaster,
+                dob: editDob,
+                address: editAddress,
+              });
+              setProfile(prev => ({ ...prev, name: editName, email: editEmail, phone: editPhone, japaTarget: editJapaTarget, initiatedName: editInitiatedName, initiationYear: editInitiationYear, spiritualMaster: editSpiritualMaster, dob: editDob, address: editAddress }));
+            } catch (e) { console.error('[updateMenteeProfile]', e); showToast?.('Failed to save profile', 'error'); return; }
             showToast?.('Profile saved!', 'success');
             profileSheetRef.current?.dismiss();
           }}>
